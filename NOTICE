@@ -1,0 +1,15 @@
+GrokBot2Claw
+Copyright 2026 Andrea Griffiths
+
+This product includes code adapted from agmsg-bridge, originally distributed
+under the MIT License with copyright held by Andrea Griffiths. The reused
+project history records contributions authored by Zo and a contribution
+co-authored by GitHub Copilot. See THIRD_PARTY_LICENSES/agmsg-bridge-MIT.txt.
+
+The temporary mailbox and bridge compatibility layer interoperates with and
+adapts the message schema used by agmsg (https://github.com/fujibee/agmsg),
+Copyright 2026 fujibee, distributed under the MIT License. See
+THIRD_PARTY_LICENSES/agmsg-MIT.txt.
+
+Grok, Grok Bot, Cursor, Anysphere, and OpenClaw are names of their respective
+projects or owners. This project is unofficial and is not endorsed by them.

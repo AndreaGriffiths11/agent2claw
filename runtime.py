@@ -1,0 +1,403 @@
+#!/usr/bin/env python3
+"""Run one message through an ephemeral local bridge, or replay it with fixtures."""
+
+import argparse
+import hashlib
+import http.client
+import json
+import os
+import re
+import secrets
+import shutil
+import signal
+import sqlite3
+import subprocess
+import tempfile
+import threading
+import time
+from pathlib import Path
+
+import http_server
+
+
+ROOT = Path(__file__).resolve().parent
+SCHEMA = """
+CREATE TABLE messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  team TEXT NOT NULL,
+  from_agent TEXT NOT NULL,
+  to_agent TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+  read_at TEXT
+);
+CREATE INDEX idx_unread ON messages(team, to_agent, read_at) WHERE read_at IS NULL;
+"""
+TERMINAL = {"completed", "failed"}
+AGENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+def request(port, token, method, path, value=None):
+    body = json.dumps(value).encode("utf-8") if value is not None else None
+    headers = {"Authorization": "Bearer " + token}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    try:
+        connection.request(method, path, body=body, headers=headers)
+        response = connection.getresponse()
+        data = response.read()
+        return response.status, json.loads(data)
+    finally:
+        connection.close()
+
+
+def stop_process_group(process):
+    if process is None:
+        return True
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=5)
+    try:
+        os.killpg(process.pid, 0)
+    except ProcessLookupError:
+        return True
+    return False
+
+
+def write_executable(path, text):
+    path.write_text(text, encoding="utf-8")
+    path.chmod(0o700)
+
+
+def run_once(prompt, *, agent, replay=False, expected_reply=None, real_openclaw=None,
+             principal="grokbot-macshell"):
+    """Run one message through ephemeral HTTP, mailbox, bridge, and adapter resources."""
+    if not isinstance(agent, str) or not AGENT_RE.fullmatch(agent):
+        raise ValueError("invalid OpenClaw agent id")
+    if not replay and real_openclaw is None:
+        real_openclaw = shutil.which("openclaw")
+    if not replay and not real_openclaw:
+        raise RuntimeError("openclaw executable not found")
+
+    nonce = secrets.token_hex(12)
+    expected = expected_reply
+    started = time.monotonic()
+    result = {
+        "passed": False,
+        "mode": "synthetic_replay" if replay else "live",
+        "real_cli_invocations": 0,
+        "nonce": nonce,
+        "expected_reply": expected,
+        "request_id": None,
+        "http_post_status": None,
+        "http_get_status": None,
+        "final_status": None,
+        "actual_reply": None,
+        "cli_invocations": 0,
+        "model_run_proven": False,
+        "cli_proof": None,
+        "cleanup": {},
+    }
+    server = thread = bridge = None
+    port = None
+    root_path = None
+
+    try:
+        root = Path(tempfile.mkdtemp(
+            prefix="grokbot2claw-replay-" if replay else "grokbot2claw-live-"))
+        root_path = root
+        db_path = root / "messages.db"
+        if root_path:
+            auth_path = root / "auth.json"
+            adapters = root / "adapters"
+            scripts = root / "scripts"
+            state = root / "state"
+            bin_dir = root / "bin"
+            proof_path = root / "cli-proof.json"
+            marker_path = root / "model-invoked"
+            for directory in (adapters, scripts, state, bin_dir):
+                directory.mkdir()
+
+            if replay:
+                # Gateway serializer principal-CeDW0csN.js:1690-1698 and
+                # observed RETRY-2.md. Only the shape is replayed, not raw logs.
+                fixture = root / "synthetic-cli"
+                envelope = {"runId": "synthetic-" + nonce, "status": "ok",
+                            "summary": "completed", "result": {
+                                "payloads": [{"text": expected, "mediaUrl": None}],
+                                "meta": {"durationMs": 1, "agentMeta": {
+                                    "sessionId": "synthetic-session",
+                                    "model": "synthetic", "provider": "fixture"}}}}
+                write_executable(fixture, """#!/usr/bin/env python3
+import json, os, stat, sys
+from pathlib import Path
+args = sys.argv[1:]
+path = args[args.index("--message-file") + 1]
+assert args == ["agent", "--agent", AGENT, "--session-key", "grokbot2claw",
+                "--message-file", path, "--timeout", "5", "--json"]
+info = os.stat(path)
+assert stat.S_ISREG(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600
+assert info.st_uid == os.getuid()
+assert sys.stdin.read() == ""
+prompt = Path(path).read_text(encoding="utf-8")
+assert "untrusted external message" in prompt
+""".replace("AGENT", repr(agent)) + "assert " + repr(expected) + " in prompt\n" +
+                    "print(" + repr(json.dumps(envelope)) + ")\n")
+                real_openclaw = str(fixture)
+
+            with sqlite3.connect(db_path) as db:
+                db.executescript(SCHEMA)
+
+            token = secrets.token_urlsafe(48)
+            digest = hashlib.sha256(token.encode("ascii")).hexdigest()
+            auth_path.write_text(json.dumps({"principals": {
+                principal: {"token_sha256": digest, "recipients": [agent]}
+            }}), encoding="utf-8")
+            auth_path.chmod(0o600)
+
+            (adapters / (agent + ".sh")).symlink_to(ROOT / "adapters" / "openclaw.sh")
+            write_executable(scripts / "send.sh", """#!/bin/sh
+set -eu
+team=$1 from=$2 to=$3
+shift 3
+[ \"$1\" = --body ] && [ \"$2\" = - ]
+body=$(cat)
+python3 - \"$AGMSG_DB\" \"$team\" \"$from\" \"$to\" \"$body\" <<'PY'
+import sqlite3, sys
+with sqlite3.connect(sys.argv[1]) as db:
+    db.execute('INSERT INTO messages(team,from_agent,to_agent,body) VALUES(?,?,?,?)', sys.argv[2:6])
+PY
+""")
+            # macOS has no coreutils timeout. The CLI and harness retain separate
+            # bounded deadlines; this compatibility shim only preserves argv.
+            write_executable(bin_dir / "timeout", "#!/bin/sh\nshift\nexec \"$@\"\n")
+            write_executable(bin_dir / "openclaw", """#!/usr/bin/env python3
+import json, os, re, stat, subprocess, sys
+
+def response_error(value):
+    if not isinstance(value, dict):
+        return None
+    result = value.get("result")
+    meta = result.get("meta") if isinstance(result, dict) else None
+    return value["error"] if value.get("error") is not None else (meta.get("error") if isinstance(meta, dict) else None)
+
+def safe_error_type(value):
+    error = response_error(value)
+    kind = error.get("type", error.get("kind")) if isinstance(error, dict) else None
+    return kind if isinstance(kind, str) and re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", kind) else None
+
+def safe_error_message(value):
+    error = response_error(value)
+    message = error.get("message") if isinstance(error, dict) else None
+    if not isinstance(message, str):
+        return None
+    message = re.sub(r"[\\x00-\\x1f\\x7f]+", " ", message)
+    message = re.sub(r"(?i)\\b(authorization|bearer|password|secret|token)\\s*[:=]\\s*\\S+", r"\\1=[redacted]", message)
+    message = re.sub(r"\\b(?:https?|wss?)://\\S+", "[url]", message)
+    message = re.sub(r"(?:/[A-Za-z0-9._~!$&'()*+,;=:@%-]+){2,}", "[path]", message)
+    message = re.sub(r"\\b[A-Za-z0-9_-]{32,}\\b", "[redacted]", message)
+    return " ".join(message.split())[:400] or None
+
+marker = os.environ["AGMSG_LIVE_RUN_MARKER"]
+try:
+    fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+except FileExistsError:
+    print("live harness refused a second model invocation", file=sys.stderr)
+    raise SystemExit(70)
+os.close(fd)
+argv = sys.argv[1:]
+proof_argv = list(argv)
+prompt_info = None
+if "--message-file" in argv:
+    index = argv.index("--message-file") + 1
+    info = os.stat(argv[index])
+    prompt_info = {
+        "regular_file": stat.S_ISREG(info.st_mode),
+        "mode": oct(stat.S_IMODE(info.st_mode)),
+        "owned_by_current_user": info.st_uid == os.getuid(),
+    }
+    proof_argv[index] = "[private prompt file]"
+completed = subprocess.run(
+    [os.environ["AGMSG_REAL_OPENCLAW"], *sys.argv[1:]],
+    input=sys.stdin.buffer.read(), stdout=subprocess.PIPE,
+)
+sys.stdout.buffer.write(completed.stdout)
+try:
+    value = json.loads(completed.stdout)
+    result = value.get("result") if isinstance(value, dict) else None
+    meta = result.get("meta") if isinstance(result, dict) else None
+    agent_meta = meta.get("agentMeta") if isinstance(meta, dict) else None
+    proof = {
+        "exit_code": completed.returncode,
+        "argv": proof_argv,
+        "prompt_file": prompt_info,
+        "ok": value.get("ok") if isinstance(value, dict) else None,
+        "status": value.get("status") if isinstance(value, dict) else None,
+        "run_id": value.get("runId") if isinstance(value, dict) else None,
+        "origin": value.get("origin") if isinstance(value, dict) else None,
+        "error_type": safe_error_type(value),
+        "error_message": safe_error_message(value),
+        "duration_ms": meta.get("durationMs") if isinstance(meta, dict) else None,
+        "session_id": agent_meta.get("sessionId") if isinstance(agent_meta, dict) else None,
+        "model": agent_meta.get("model") if isinstance(agent_meta, dict) else None,
+        "provider": agent_meta.get("provider") if isinstance(agent_meta, dict) else None,
+        "tool_summary": meta.get("toolSummary") if isinstance(meta, dict) else None,
+    }
+    with open(os.environ["AGMSG_LIVE_PROOF"], "w", encoding="utf-8") as stream:
+        json.dump(proof, stream)
+except Exception:
+    pass
+raise SystemExit(completed.returncode)
+""")
+
+            server = http_server.create_server(
+                "127.0.0.1", 0, str(db_path), "localtest", str(auth_path),
+                read_timeout=2.0, db_timeout=2.0, max_connections=4,
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            port = server.server_address[1]
+
+            env = os.environ.copy()
+            env.pop("AGMSG_BRIDGE_ENV", None)
+            env.update({
+                "AGMSG_DB": str(db_path),
+                "AGMSG_SCRIPTS": str(scripts),
+                "AGMSG_BRIDGE_TEAM": "localtest",
+                "AGMSG_BRIDGE_AGENTS": agent,
+                "AGMSG_BRIDGE_ADAPTERS": str(adapters),
+                "AGMSG_BRIDGE_STATE": str(state),
+                "AGMSG_BRIDGE_POLL": "1",
+                "AGMSG_BRIDGE_MAX_DISPATCH": "1",
+                "AGMSG_BRIDGE_MAX_BOT_HOPS": "0",
+                "AGMSG_BRIDGE_ADAPTER_TIMEOUT": "270",
+                "OPENCLAW_BIN": str(bin_dir / "openclaw"),
+                "OPENCLAW_AGENT": agent,
+                "OPENCLAW_SESSION_KEY": "grokbot2claw",
+                "OPENCLAW_TIMEOUT": "5" if replay else "240",
+                "TMPDIR": str(root),
+                "AGMSG_REAL_OPENCLAW": real_openclaw,
+                "AGMSG_LIVE_RUN_MARKER": str(marker_path),
+                "AGMSG_LIVE_PROOF": str(proof_path),
+                "PATH": str(bin_dir) + os.pathsep + env.get("PATH", ""),
+            })
+            bridge = subprocess.Popen(
+                ["bash", str(ROOT / "bridge.sh")], env=env,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+
+            post_status, sent = request(port, token, "POST", "/messages", {
+                "recipient": agent, "body": prompt,
+                "idempotency_key": "live-" + nonce,
+            })
+            result["http_post_status"] = post_status
+            result["request_id"] = sent.get("id")
+            if post_status != 202 or not result["request_id"]:
+                raise RuntimeError("HTTP submit did not return a pending request")
+
+            deadline = time.monotonic() + (10 if replay else 300)
+            while time.monotonic() < deadline:
+                get_status, current = request(
+                    port, token, "GET", "/messages/" + result["request_id"]
+                )
+                result["http_get_status"] = get_status
+                if get_status != 200:
+                    raise RuntimeError("HTTP status read failed")
+                if current.get("status") in TERMINAL:
+                    result["final_status"] = current.get("status")
+                    result["actual_reply"] = current.get("reply")
+                    if current.get("error"):
+                        result["error_code"] = current["error"]
+                    break
+                time.sleep(2)
+            else:
+                raise TimeoutError("request did not reach a terminal state before its deadline")
+
+            with sqlite3.connect(db_path) as db:
+                replies = db.execute(
+                    "SELECT body FROM messages WHERE team=? AND from_agent=? AND to_agent=?",
+                    ("localtest", agent, principal),
+                ).fetchall()
+            result["mailbox_reply_exact"] = replies == [(result["actual_reply"],)]
+            result["cli_invocations"] = 1 if marker_path.exists() else 0
+            if proof_path.exists():
+                result["cli_proof"] = json.loads(proof_path.read_text(encoding="utf-8"))
+            result["real_cli_invocations"] = 0 if replay else result["cli_invocations"]
+            result["cleanup"]["prompt_and_output_files_removed"] = not any(
+                root.glob("grokbot2claw-openclaw*"))
+            result["model_run_proven"] = bool(
+                not replay
+                and isinstance(result["cli_proof"], dict)
+                and (result["cli_proof"].get("run_id") or result["cli_proof"].get("session_id"))
+                and result["cli_proof"].get("model")
+            )
+        result["passed"] = (
+            result["final_status"] == "completed"
+            and (expected is None or result["actual_reply"] == expected)
+            and result["cli_invocations"] == 1
+            and result["mailbox_reply_exact"]
+            and (replay or result["model_run_proven"])
+            and isinstance(result["cli_proof"], dict)
+            and result["cli_proof"].get("exit_code") == 0
+        )
+    except Exception as error:
+        result["failure"] = type(error).__name__ + ": " + str(error)
+    finally:
+        if server is not None:
+            server.shutdown()
+            server.server_close()
+        if thread is not None:
+            thread.join(timeout=5)
+        result["cleanup"]["bridge_process_group_gone"] = stop_process_group(bridge)
+        if port is not None:
+            try:
+                connection = http.client.HTTPConnection("127.0.0.1", port, timeout=1)
+                connection.request("GET", "/")
+                connection.getresponse()
+                connection.close()
+                result["cleanup"]["port_closed"] = False
+            except OSError:
+                result["cleanup"]["port_closed"] = True
+        if root_path is not None:
+            shutil.rmtree(root_path, ignore_errors=True)
+        result["cleanup"]["temporary_directory_removed"] = bool(root_path and not root_path.exists())
+        result["duration_seconds"] = round(time.monotonic() - started, 3)
+
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--live", action="store_true", help="authorize exactly one real OpenClaw model invocation")
+    mode.add_argument("--replay", action="store_true", help="synthetic Gateway-shape replay; never invoke installed OpenClaw")
+    parser.add_argument("--agent", required=True, help="operator-selected OpenClaw agent id")
+    args = parser.parse_args()
+    if not args.live and not args.replay:
+        parser.error("refusing to call a real model without --live")
+    nonce = secrets.token_hex(12)
+    expected = ("SYNTHETIC REPLAY ACK " if args.replay else "ACK ") + nonce
+    prompt = (
+        "This is an explicitly authorized connectivity test. Reply with exactly "
+        + expected
+        + ". Do not call tools, read files, change state, send messages, or start further tasks."
+    )
+    result = run_once(
+        prompt, agent=args.agent, replay=args.replay,
+        expected_reply=expected, principal="local-smoke")
+    # Keep the historical smoke proof nonce stable at the outer command boundary.
+    result["nonce"] = nonce
+    print(json.dumps(result, indent=2, sort_keys=True))
+    raise SystemExit(0 if result["passed"] and all(result["cleanup"].values()) else 1)
+
+
+if __name__ == "__main__":
+    main()

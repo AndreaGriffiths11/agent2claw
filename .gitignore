@@ -1,0 +1,6 @@
+.env
+.DS_Store
+state/
+*.log
+__pycache__/
+*.py[cod]
