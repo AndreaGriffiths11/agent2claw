@@ -132,7 +132,7 @@ Replay proves the local HTTP, mailbox, bridge, adapter, parser, and cleanup path
 ## Compatibility status
 
 - macOS arm64: fixture suite passed against Python 3.9.6, Bash 3.2.57, SQLite 3.51.0, and the OpenClaw 2026.9.1 CLI contract.
-- Linux: CI exercises the fixture suite, but live provider behavior is not claimed.
+- Linux: not yet validated in this staging repository. No cross-platform claim is made.
 - Real end-to-end source proof: the predecessor implementation returned an actual OpenClaw reply through Grok Bot's approved Mac Shell flow on September 14, 2026. The generalized agent-selection changes in this repository are fixture-tested; no additional model run was made while preparing the staging repo.
 
 ## Project status
