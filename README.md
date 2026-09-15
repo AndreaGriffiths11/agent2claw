@@ -56,17 +56,17 @@ python3 runtime.py --replay --agent YOUR_AGENT_ID
 
 Replace `YOUR_AGENT_ID` with an id shown by `openclaw agents list`. The replay uses a fake OpenClaw executable and does **not** call a model or provider.
 
-### 3. Send one harmless live message
+### 3. Ask for a bounded test report
 
 This is the first command that invokes the selected OpenClaw agent:
 
 ```bash
 python3 message.py --send --agent YOUR_AGENT_ID --message-file - <<'PROMPT'
-Reply with exactly GROKBOT2CLAW_OK. Do not use tools.
+Inspect /path/to/project and run its documented offline test command. Do not edit files, install dependencies, access credentials, use the network, send messages, or recursively invoke this bridge. Return the exact command, pass/fail/error/skip counts, duration, failures with file lines, and what the run does not prove. If all tests pass, say so; do not invent failures.
 PROMPT
 ```
 
-A successful run prints the agent reply. `GROKBOT2CLAW_OK` is the requested response, not a guarantee: model output can vary. The command returns nonzero and prints no partial reply if the bridge or OpenClaw call fails.
+A successful run prints the agent's report. The command returns nonzero and prints no partial reply if the bridge or OpenClaw call fails. The selected agent keeps its normal permissions, so the prompt is a task boundary, not a tool sandbox. Review the path and use a least-privileged agent.
 
 ### 4. Let Grok Bot use it through Mac Shell
 
@@ -133,7 +133,8 @@ Replay proves the local HTTP, mailbox, bridge, adapter, parser, and cleanup path
 
 - macOS arm64: fixture suite passed against Python 3.9.6, Bash 3.2.57, SQLite 3.51.0, and the OpenClaw 2026.9.1 CLI contract.
 - Linux: not yet validated in this staging repository. No cross-platform claim is made.
-- Real end-to-end source proof: the predecessor implementation returned an actual OpenClaw reply through Grok Bot's approved Mac Shell flow on September 14, 2026. The generalized agent-selection changes in this repository are fixture-tested; no additional model run was made while preparing the staging repo.
+- Local live handoff verified on September 14, 2026: `message.py --send` invoked the configured `rusty` agent through a dedicated OpenClaw session. The agent ran the repository's read-only fixture suite and returned an actual report: 35 passed, 0 failed, 0 errors, and 0 skipped in 23.988 seconds. The repository remained unchanged.
+- That task started from the local command line, not the Grok Bot UI. Grok initiation of this specific task, Mac Shell approval for it, fresh-machine setup, and cross-platform behavior remain unverified.
 
 ## Project status
 
