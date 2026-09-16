@@ -59,6 +59,8 @@ def stop_process_group(process):
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        return False
     try:
         process.wait(timeout=10)
     except subprocess.TimeoutExpired:
@@ -68,6 +70,10 @@ def stop_process_group(process):
         os.killpg(process.pid, 0)
     except ProcessLookupError:
         return True
+    except PermissionError:
+        # Some hosted macOS runners deny the post-wait signal-0 probe. TERM was
+        # accepted for this controlled group and the direct child was reaped.
+        return process.poll() is not None
     return False
 
 

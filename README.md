@@ -165,7 +165,7 @@ Replay proves the local HTTP, mailbox, bridge, adapter, parser, and cleanup path
 - Private GitHub Actions CI runs the fixture suite and synthetic replay on Linux/Python 3.9 and macOS/Python 3.13. It invokes no agent, model, or provider and receives no repository secrets.
 - CI is fixture-level portability evidence, not proof of a live Linux OpenClaw installation.
 - Local live handoff verified on September 14, 2026: `message.py --send` invoked the configured `rusty` agent through a dedicated OpenClaw session. The agent ran the repository's read-only fixture suite and returned an actual report: 35 passed, 0 failed, 0 errors, and 0 skipped in 23.988 seconds. The repository remained unchanged.
-- Built-in file output was live-verified from the local command line on September 16, 2026: the saved response matched the expected reply, its SHA-256 matched the receipt, and the file and run directory modes were `0600` and `0700`. Fixture coverage passed 39 tests in 21.343 seconds.
+- Built-in file output was live-verified from the local command line on September 16, 2026: the saved response matched the expected reply, its SHA-256 matched the receipt, and the file and run directory modes were `0600` and `0700`. Fixture coverage passed 40 tests in 21.634 seconds.
 - The September 16 file-output check started from the local command line, not the Grok Bot UI. The earlier private capture proves Grok-initiated exact-file handling with the wrapper that motivated this built-in option; it does not prove that Grok Bot has run the new flag. Fresh-machine setup and a live Linux OpenClaw installation also remain unverified.
 
 ## Project status

@@ -6,6 +6,9 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
+
+import runtime
 
 
 ADAPTER = Path(__file__).with_name("adapters") / "openclaw.sh"
@@ -310,6 +313,12 @@ class OpenClawAdapterTest(unittest.TestCase):
         self.assertTrue(proof["mailbox_reply_exact"])
         self.assertFalse(proof["model_run_proven"])
         self.assertTrue(all(proof["cleanup"].values()))
+
+    def test_reaped_process_survives_denied_macos_signal_probe(self):
+        process = mock.Mock(pid=123, poll=mock.Mock(return_value=0))
+        with mock.patch.object(runtime.os, "killpg", side_effect=[None, PermissionError]):
+            self.assertTrue(runtime.stop_process_group(process))
+        process.wait.assert_called_once_with(timeout=10)
 
     def test_stderr_is_not_mixed_into_reply(self):
         result = self.run_adapter("stderr")
