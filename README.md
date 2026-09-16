@@ -2,7 +2,7 @@
 
 Send a message from Grok Bot to your OpenClaw agent and return the reply through approved Mac Shell access.
 
-**Unofficial, local-first developer preview.** GrokBot2Claw is not affiliated with or endorsed by xAI, Grok, Cursor, Anysphere, or OpenClaw.
+**Unofficial local-first developer preview.** Not affiliated with or endorsed by xAI, Grok, Cursor, Anysphere, or OpenClaw.
 
 ## Why use it?
 
@@ -11,7 +11,7 @@ Grok Bot can plan work in its desktop conversation, while OpenClaw can act insid
 - one approved shell command sends one message;
 - the operator chooses the OpenClaw agent, not the message sender;
 - the reply comes back on stdout, so Grok Bot can read it in the same Mac Shell run;
-- no server is left running, no MCP server is installed, and no global configuration is changed.
+- no server remains running and no global configuration changes.
 
 Use it when Grok Bot needs a bounded answer from an existing OpenClaw agent without manually copying the task and reply between apps.
 
@@ -45,7 +45,7 @@ git clone https://github.com/AndreaGriffiths11/grokbot2claw.git
 cd grokbot2claw
 ```
 
-The repository is private during staging, so cloning requires an account that already has access. There is no installer and no package dependency step.
+The private staging repository requires an account with access. There is no install step.
 
 ### 2. Run the offline test suite
 
@@ -54,7 +54,7 @@ python3 -m unittest -v test_message.py test_http_server.py test_openclaw_adapter
 python3 runtime.py --replay --agent YOUR_AGENT_ID
 ```
 
-Replace `YOUR_AGENT_ID` with an id shown by `openclaw agents list`. The replay uses a fake OpenClaw executable and does **not** call a model or provider.
+Replace `YOUR_AGENT_ID` with an id shown by `openclaw agents list`. Replay uses a fake OpenClaw executable and does **not** call a model or provider.
 
 ### 3. Ask for a bounded test report
 
@@ -85,7 +85,7 @@ Return stdout to me. Do not retry, start a daemon, change OpenClaw configuration
 or add --deliver unless I explicitly approve that separate action.
 ```
 
-Review each Mac Shell request in the Grok Bot UI. Do not place passwords, API keys, bearer tokens, or other credentials in a message.
+Review each Mac Shell request. Never put credentials in a message.
 
 ## What happens during one command
 
@@ -104,7 +104,7 @@ The command creates a random bearer token, an owner-only auth file, a temporary 
 4. accepts only a successful, bounded text payload;
 5. prints the reply and removes the listener, token file, mailbox, prompt/output files, wrappers, and bridge process group.
 
-The OpenClaw conversation for `agent:YOUR_AGENT_ID:grokbot2claw` is persistent. Stopping the local command cleans up local processes, but it may not cancel provider-side computation already accepted upstream.
+The `agent:YOUR_AGENT_ID:grokbot2claw` conversation persists. Stopping locally may not cancel computation already accepted upstream.
 
 ## Security model and limits
 
@@ -132,7 +132,8 @@ Replay proves the local HTTP, mailbox, bridge, adapter, parser, and cleanup path
 ## Compatibility status
 
 - macOS arm64: fixture suite passed against Python 3.9.6, Bash 3.2.57, SQLite 3.51.0, and the OpenClaw 2026.9.1 CLI contract.
-- Linux: not yet validated in this staging repository. No cross-platform claim is made.
+- Private GitHub Actions CI runs the fixture suite and synthetic replay on Linux/Python 3.9 and macOS/Python 3.13. It invokes no agent, model, or provider and receives no repository secrets.
+- CI is fixture-level portability evidence, not proof of a live Linux OpenClaw installation.
 - Local live handoff verified on September 14, 2026: `message.py --send` invoked the configured `rusty` agent through a dedicated OpenClaw session. The agent ran the repository's read-only fixture suite and returned an actual report: 35 passed, 0 failed, 0 errors, and 0 skipped in 23.988 seconds. The repository remained unchanged.
 - That task started from the local command line, not the Grok Bot UI. Grok initiation of this specific task, Mac Shell approval for it, fresh-machine setup, and cross-platform behavior remain unverified.
 
