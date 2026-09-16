@@ -295,9 +295,11 @@ class OpenClawAdapterTest(unittest.TestCase):
             self.assertEqual(result.stdout, "")
 
     def test_http_replay_uses_actual_adapter_without_live_cli(self):
+        # The replay has separate 10-second request and process-cleanup bounds;
+        # allow both to expire on slower hosted macOS runners.
         result = subprocess.run(
             ["python3", str(ADAPTER.parent.parent / "runtime.py"), "--replay", "--agent", "test-agent"],
-            text=True, capture_output=True, timeout=20,
+            text=True, capture_output=True, timeout=45,
         )
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         proof = json.loads(result.stdout)
