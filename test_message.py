@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -69,6 +70,81 @@ class MessageCommandTest(unittest.TestCase):
         runner.assert_called_once_with(
             "line one\n'quotes' $(literal) 世界",
             agent="docs-agent", principal="grokbot-macshell")
+
+    def test_output_directory_saves_exact_json_and_prints_compact_receipt(self):
+        reply = "line one\n`code` \"quotes\" — 世界"
+        result = {"passed": True, "request_id": "fixture-id", "actual_reply": reply,
+                  "cleanup": {"port_closed": True}}
+        message_path = self.root / "message.txt"
+        message_path.write_text("safe request")
+        output_root = self.root / "results with spaces 世界"
+
+        status, stdout, stderr = self.call_main([
+            "--send", "--agent", "docs-agent", "--message-file", str(message_path),
+            "--output-dir", str(output_root), "--json",
+        ], mock.Mock(return_value=result))
+
+        self.assertEqual((status, stderr), (0, ""))
+        receipt = json.loads(stdout)
+        self.assertEqual(set(receipt), {"status", "request_id", "result_path", "sha256"})
+        self.assertNotIn(reply, stdout)
+        result_path = Path(receipt["result_path"])
+        data = result_path.read_bytes()
+        self.assertEqual(json.loads(data), {
+            "status": "completed", "request_id": "fixture-id", "reply": reply})
+        self.assertEqual(receipt["sha256"], hashlib.sha256(data).hexdigest())
+        self.assertEqual(os.stat(result_path.parent).st_mode & 0o777, 0o700)
+        self.assertEqual(os.stat(result_path).st_mode & 0o777, 0o600)
+
+    def test_invalid_output_directory_is_rejected_before_runner(self):
+        message_path = self.root / "message.txt"
+        message_path.write_text("safe request")
+        invalid = self.root / "not-a-directory"
+        invalid.write_text("existing user file")
+        runner = mock.Mock()
+
+        status, stdout, stderr = self.call_main([
+            "--send", "--agent", "docs-agent", "--message-file", str(message_path),
+            "--output-dir", str(invalid),
+        ], runner)
+
+        self.assertEqual(status, 2)
+        self.assertEqual(stdout, "")
+        self.assertEqual(stderr, "message command: cannot prepare output directory\n")
+        self.assertEqual(invalid.read_text(), "existing user file")
+        runner.assert_not_called()
+
+    def test_output_directory_is_removed_when_bridge_fails(self):
+        message_path = self.root / "message.txt"
+        message_path.write_text("safe request")
+        output_root = self.root / "results"
+        runner = mock.Mock(return_value={
+            "passed": False, "error_code": "adapter_failed", "cleanup": {"port_closed": True}})
+
+        status, stdout, stderr = self.call_main([
+            "--send", "--agent", "docs-agent", "--message-file", str(message_path),
+            "--output-dir", str(output_root),
+        ], runner)
+
+        self.assertEqual(status, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(stderr, "message command failed: adapter_failed\n")
+        self.assertEqual(list(output_root.iterdir()), [])
+
+    def test_output_directory_is_removed_when_runner_raises(self):
+        message_path = self.root / "message.txt"
+        message_path.write_text("safe request")
+        output_root = self.root / "results"
+
+        status, stdout, stderr = self.call_main([
+            "--send", "--agent", "docs-agent", "--message-file", str(message_path),
+            "--output-dir", str(output_root),
+        ], mock.Mock(side_effect=TimeoutError("private detail")))
+
+        self.assertEqual(status, 1)
+        self.assertEqual(stdout, "")
+        self.assertEqual(stderr, "message command failed: internal failure\n")
+        self.assertEqual(list(output_root.iterdir()), [])
 
     def test_failure_has_no_stdout_or_internal_detail(self):
         path = self.root / "message.txt"
