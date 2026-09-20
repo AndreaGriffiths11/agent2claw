@@ -1,32 +1,54 @@
 # Security Policy
 
-## Reporting a vulnerability
+## Reporting a Vulnerability
 
-Report suspected vulnerabilities privately through GitHub. Open the repository's **Security** tab and use **Report a vulnerability** (private vulnerability reporting), or draft a security advisory at:
+If you discover a security vulnerability in GrokBot2Claw, **please report it responsibly**.
 
-https://github.com/AndreaGriffiths11/grokbot2claw/security/advisories/new
+**Do NOT open a public GitHub issue, discussion, or pull request for security vulnerabilities.**
 
-If that page is unavailable because private reporting has not been enabled, contact the repository owner, [@AndreaGriffiths11](https://github.com/AndreaGriffiths11), through GitHub and ask for a private channel before sharing details.
+Instead, email: **andreagriffiths11@gmail.com**
 
-Please do not file a public issue, discussion, or pull request for an unfixed security problem.
+If GitHub private vulnerability reporting is enabled for this repository, you may also use the **Security** tab and **Report a vulnerability**, or draft an advisory at https://github.com/AndreaGriffiths11/grokbot2claw/security/advisories/new. Email is the primary channel.
 
-Include what you can: the affected file and version or commit, steps to reproduce, and the impact you observed. Do not include credentials, tokens, or private prompt-derived content from `results/` in the report.
+Include:
+- Description of the vulnerability
+- Steps to reproduce
+- Potential impact
+- Suggested fix (if any)
+
+Do not include credentials, tokens, or private prompt-derived content from `results/` in the report.
+
+## Response Timeline
+
+- **Acknowledgment**: Within 48 hours
+- **Initial assessment**: Within 1 week
+- **Fix or mitigation**: As soon as possible, depending on severity
 
 ## Scope
 
-GrokBot2Claw is a local bridge between Grok Bot Mac Shell and an OpenClaw agent. The following are in scope:
+GrokBot2Claw is a local bridge between Grok Bot Mac Shell and an OpenClaw agent. This policy covers:
+- The command entry point (`message.py`) and runtime (`runtime.py`)
+- The loopback HTTP server and bearer token handling (`http_server.py`)
+- The temporary SQLite mailbox and bridge process (`bridge.sh`)
+- The fixed OpenClaw adapter (`adapters/openclaw.sh`)
+- The `--output-dir` file output mode, including file and directory permissions
+- The GitHub Actions workflow (`.github/workflows/`)
 
-- `message.py`, `runtime.py`, `http_server.py`, `bridge.sh`, and `adapters/`;
-- the loopback HTTP listener, bearer token handling, temporary SQLite mailbox, and cleanup path;
-- the `--output-dir` file output mode, including file and directory permissions;
-- the GitHub Actions workflow in `.github/workflows/`.
+Out of scope for this project, though reports are still welcome as context:
+- The permissions and behavior of the OpenClaw agent you select. The agent keeps its normal permissions; this bridge does not create a tool sandbox.
+- Grok Bot, Mac Shell approval prompts, OpenClaw, or provider services themselves.
+- Outcomes that require the operator to approve a Mac Shell command they did not review.
 
-The following are out of scope for this project, although reports are still welcome as context:
+## Security Design
 
-- the permissions and behavior of the OpenClaw agent you select; the agent keeps its normal permissions and this bridge does not create a tool sandbox;
-- Grok Bot, Mac Shell approval prompts, OpenClaw, or provider services themselves;
-- prompt-injection outcomes that require the operator to approve a command they did not review.
+- **Loopback only**: the HTTP server binds to `127.0.0.1` on a random port for one command
+- **Fresh bearer token** per run, stored in an owner-only auth file
+- **Fixed agent, session, executable, and CLI flags**: the message sender cannot change them
+- **No `--deliver`**, no daemon, no retry loop, no web UI, no MCP server
+- **Bounded input**: UTF-8 message, 8 KiB maximum
+- **Owner-only output**: `result.json` is written once with mode `0600` inside a `0700` run directory
+- **Cleanup on exit**: listener, token file, mailbox, temporary files, and bridge process group are removed
 
-## Supported versions
+## Supported Versions
 
 This is an unofficial developer preview. Only the current `main` branch receives fixes; there are no released or packaged versions.
