@@ -23,7 +23,7 @@ This preview has been tested on macOS with:
 - OpenClaw `2026.9.1`, with its Gateway running;
 - an existing OpenClaw agent you deliberately choose for this bridge;
 - Python `3.9+`, Bash, and SQLite (`python3`, `bash`, and `sqlite3` on `PATH`);
-- Git and GitHub access to this private staging repository.
+- Git and access to this GitHub repository (the owner may still require permission while it is unpublished).
 
 Check the local prerequisites without invoking a model:
 
@@ -38,14 +38,14 @@ Do not create a new agent just for the quickstart unless you have separately rev
 
 ## Quickstart
 
-### 1. Clone the private preview
+### 1. Clone from GitHub
 
 ```bash
 git clone https://github.com/AndreaGriffiths11/grokbot2claw.git
 cd grokbot2claw
 ```
 
-The private staging repository requires an account with access. There is no install step.
+Until the owner publishes the repository, cloning may require a GitHub account that has been granted access. There is no install step.
 
 ### 2. Run the offline test suite
 
@@ -162,15 +162,19 @@ Replay proves the local HTTP, mailbox, bridge, adapter, parser, and cleanup path
 ## Compatibility status
 
 - macOS arm64: fixture suite passed against Python 3.9.6, Bash 3.2.57, SQLite 3.51.0, and the OpenClaw 2026.9.1 CLI contract.
-- Private GitHub Actions CI runs the fixture suite and synthetic replay on Linux/Python 3.9 and macOS/Python 3.13. It invokes no agent, model, or provider and receives no repository secrets.
+- GitHub Actions CI runs the fixture suite and synthetic replay on Linux/Python 3.9 and macOS/Python 3.13. It invokes no agent, model, or provider and receives no repository secrets.
 - CI is fixture-level portability evidence, not proof of a live Linux OpenClaw installation.
 - Local live handoff verified on September 14, 2026: `message.py --send` invoked the configured `rusty` agent through a dedicated OpenClaw session. The agent ran the repository's read-only fixture suite and returned an actual report: 35 passed, 0 failed, 0 errors, and 0 skipped in 23.988 seconds. The repository remained unchanged.
 - Built-in file output was live-verified from the local command line on September 16, 2026: the saved response matched the expected reply, its SHA-256 matched the receipt, and the file and run directory modes were `0600` and `0700`. Fixture coverage passed 40 tests in 21.634 seconds.
-- The September 16 file-output check started from the local command line, not the Grok Bot UI. The earlier private capture proves Grok-initiated exact-file handling with the wrapper that motivated this built-in option; it does not prove that Grok Bot has run the new flag. Fresh-machine setup and a live Linux OpenClaw installation also remain unverified.
+- The September 16 file-output check started from the local command line, not the Grok Bot UI. An earlier capture, not included in this repository, proves Grok-initiated exact-file handling with the wrapper that motivated this built-in option; it does not prove that Grok Bot has run the new flag. Fresh-machine setup and a live Linux OpenClaw installation also remain unverified.
 
 ## Project status
 
-This repository is a **private staging preview**. It has not been published publicly, packaged, deployed, or installed globally.
+This repository is an **unofficial developer preview** shared with a named audience. The GitHub repository may still require access until the owner publishes it. The code has not been packaged, deployed, or installed globally.
+
+## Security
+
+Report suspected vulnerabilities privately as described in [SECURITY.md](SECURITY.md). Do not open a public issue for an unfixed security problem.
 
 ## License and provenance
 
