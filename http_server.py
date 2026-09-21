@@ -222,6 +222,9 @@ class BoundedHTTPServer(ThreadingMixIn, HTTPServer):
         super().__init__(address, handler)
 
     def process_request(self, request, client_address):
+        # BaseHTTPRequestHandler parses the request line and headers before
+        # do_POST/do_GET, so apply the deadline before handing off the socket.
+        request.settimeout(self.read_timeout)
         if not self._slots.acquire(blocking=False):
             try:
                 request.sendall(
@@ -298,7 +301,6 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             self._json(413 if length > MAX_REQUEST_BYTES else 400, {"error": "invalid_request"})
             return
-        self.connection.settimeout(self.server.read_timeout)
         try:
             raw = self.rfile.read(length)
         except (socket.timeout, TimeoutError):

@@ -77,7 +77,7 @@ On success, stdout contains only a compact JSON receipt:
 {"status":"completed","request_id":"…","reply":"the exact agent reply"}
 ```
 
-The file is UTF-8 JSON written once with owner-only mode `0600` inside a new owner-only `0700` run directory, so existing files are never overwritten. The SHA-256 value covers the exact `result.json` bytes. `--output-dir` takes precedence over `--json`: the full envelope goes to the file and stdout remains the compact receipt. Without `--output-dir`, stdout behavior is unchanged (`--json` prints the full envelope; otherwise stdout is the plain reply).
+The file is UTF-8 JSON written through an owner-only temporary file and atomically linked once as `result.json` with mode `0600` inside a new owner-only `0700` run directory. Existing files are never overwritten, and existing operator-owned parent directory modes are not changed. The SHA-256 value covers the exact final `result.json` bytes. `--output-dir` takes precedence over `--json`: the full envelope goes to the file and stdout remains the compact receipt. Without `--output-dir`, stdout behavior is unchanged (`--json` prints the full envelope; otherwise stdout is the plain reply).
 
 The result persists until you delete it. It can contain private prompt-derived content, so keep `results/` out of version control and remove finished runs when they are no longer needed. If Grok Bot cannot read or attach the returned path, move the output directory to an already-approved location; do not widen Grok Bot's permissions for this bridge.
 
@@ -130,10 +130,10 @@ The command creates a random bearer token, an owner-only auth file, a temporary 
 1. validates the agent id and UTF-8 message (maximum 8 KiB);
 2. starts the local resources;
 3. invokes `openclaw agent --agent … --session-key grokbot2claw --message-file … --json` without `--deliver`;
-4. accepts only a successful, bounded text payload;
+4. accepts only a successful, bounded UTF-8 text payload; NUL, DEL, and control bytes other than tab, CR, and LF are rejected, while trailing newlines are preserved;
 5. prints the reply, or saves the completed response envelope when `--output-dir` is set, and removes the listener, token file, mailbox, temporary prompt/output files, wrappers, and bridge process group.
 
-The `agent:YOUR_AGENT_ID:grokbot2claw` conversation persists. Stopping locally may not cancel computation already accepted upstream.
+The `agent:YOUR_AGENT_ID:grokbot2claw` conversation persists. An owner-only local file lock keyed by agent and this fixed session rejects a concurrent command before model invocation and releases automatically on normal exit, failure, or catchable signals. The stable `0600` lock file remains as safe metadata in a `0700` per-user lock directory; it is not unlinked, avoiding lock-inode replacement races. This serialization is local to one machine and this program. A local timeout or interruption may leave work already accepted by the Gateway or provider running, so it is not remote cancellation or cross-machine exclusivity. `SIGKILL` cannot run cleanup.
 
 ## Next steps
 

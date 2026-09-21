@@ -243,10 +243,9 @@ class OpenClawAdapterTest(unittest.TestCase):
                     self.assertEqual(proof["provider"], "fixture")
                 if mode == "nested_error":
                     self.assertEqual(proof["error_type"], "provider_error")
-                    self.assertEqual(proof["error_message"], "token=[redacted]")
                 if mode == "failed_exit":
-                    self.assertIn("token=[redacted]", proof["error_message"])
                     self.assertNotIn("supersecretvalue", proof_text)
+                self.assertNotIn("error_message", proof)
 
     def gateway(self, **meta):
         # Minimal Gateway success, not agent exec or --local.
@@ -274,6 +273,12 @@ class OpenClawAdapterTest(unittest.TestCase):
         value["ok"] = True
         result = self.run_adapter(RESPONSE=json.dumps(value))
         self.assertEqual((result.returncode, result.stdout), (0, "synthetic reply"))
+
+    def test_reply_trailing_newlines_are_preserved(self):
+        value = self.gateway()
+        value["result"]["payloads"] = [{"text": "exact reply\n\n", "mediaUrl": None}]
+        result = self.run_adapter(RESPONSE=json.dumps(value))
+        self.assertEqual((result.returncode, result.stdout), (0, "exact reply\n\n"))
 
     def test_outer_failure_wins_over_nested_text(self):
         for status in (
@@ -327,7 +332,6 @@ class OpenClawAdapterTest(unittest.TestCase):
         value["status"] = "error"
         result = self.assert_rejected(value)
         self.assertIn("type=provider_error", result.stderr)
-        self.assertIn("token=[redacted]", result.stderr)
         self.assertNotIn("syntheticsecret", result.stderr)
         self.assertNotIn("example.test", result.stderr)
         value["result"]["meta"]["error"]["kind"] = "unsafe kind " * 100
@@ -410,6 +414,7 @@ class OpenClawAdapterTest(unittest.TestCase):
         self.assertTrue(proof["mailbox_reply_exact"])
         self.assertFalse(proof["model_run_proven"])
         self.assertTrue(all(proof["cleanup"].values()))
+        self.assertEqual(proof["cli_proof"]["argv"][4], "grokbot2claw-replay")
 
     def test_reaped_process_survives_denied_macos_signal_probe(self):
         process = mock.Mock(pid=123, poll=mock.Mock(return_value=0))
@@ -428,9 +433,6 @@ class OpenClawAdapterTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
         self.assertIn("exit 1; type=cli_error", result.stderr)
-        self.assertIn("token=[redacted]", result.stderr)
-        self.assertIn("[url]", result.stderr)
-        self.assertIn("[path]", result.stderr)
         self.assertNotIn("supersecretvalue", result.stderr)
         self.assertNotIn("127.0.0.1", result.stderr)
         self.assertNotIn("/Users/example", result.stderr)

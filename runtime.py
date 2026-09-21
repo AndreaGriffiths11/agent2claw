@@ -2,6 +2,8 @@
 """Run one message through an ephemeral local bridge, or replay it with fixtures."""
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import http.client
 import json
@@ -11,6 +13,7 @@ import secrets
 import shutil
 import signal
 import sqlite3
+import stat
 import subprocess
 import tempfile
 import threading
@@ -34,6 +37,102 @@ CREATE INDEX idx_unread ON messages(team, to_agent, read_at) WHERE read_at IS NU
 """
 TERMINAL = {"completed", "failed"}
 AGENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+SESSION_KEY = "grokbot2claw"
+REPLAY_SESSION_KEY = "grokbot2claw-replay"
+
+
+class SignalInterruption(BaseException):
+    def __init__(self, signum):
+        super().__init__(signum)
+        self.signum = signum
+
+
+class SessionBusyError(RuntimeError):
+    pass
+
+
+@contextlib.contextmanager
+def signal_guard():
+    """Turn catchable termination signals into cleanup-safe exceptions."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    handled = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+    previous = {signum: signal.getsignal(signum) for signum in handled}
+
+    def interrupt(signum, _frame):
+        raise SignalInterruption(signum)
+
+    for signum in handled:
+        signal.signal(signum, interrupt)
+    try:
+        yield
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
+def _secure_lock_directory():
+    runtime_dir = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime_dir:
+        parent = Path(runtime_dir)
+        try:
+            info = os.stat(parent, follow_symlinks=False)
+        except OSError:
+            parent = None
+        else:
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+                parent = None
+    else:
+        parent = None
+    if parent is None:
+        parent = Path(tempfile.gettempdir())
+    path = parent / f"grokbot2claw-locks-{os.getuid()}"
+    try:
+        path.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    info = os.stat(path, follow_symlinks=False)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise RuntimeError("unsafe local session lock directory")
+    return path
+
+
+def acquire_session_lock(agent, session_key, replay_root=None):
+    """Hold one stable lock inode per local agent/session; never unlink it."""
+    directory = replay_root / "fixture-locks" if replay_root else _secure_lock_directory()
+    directory.mkdir(mode=0o700, exist_ok=True)
+    name = hashlib.sha256(f"{agent}\0{session_key}".encode()).hexdigest() + ".lock"
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(directory / name, flags, 0o600)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise RuntimeError("unsafe local session lock file")
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SessionBusyError(
+                f"another local command is already using agent {agent!r} session {session_key!r}"
+            ) from None
+        metadata = json.dumps(
+            {"agent": agent, "session_key": session_key, "pid": os.getpid()}, separators=(",", ":")
+        ).encode()
+        os.ftruncate(descriptor, 0)
+        os.write(descriptor, metadata + b"\n")
+        os.fsync(descriptor)
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def release_session_lock(descriptor):
+    if descriptor is not None:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
 
 
 def request(port, token, method, path, value=None):
@@ -73,6 +172,21 @@ def stop_process_group(process):
         # Some hosted macOS runners deny the post-wait signal-0 probe. TERM was
         # accepted for this controlled group and the direct child was reaped.
         return process.poll() is not None
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            return process.poll() is not None
+        time.sleep(0.05)
     return False
 
 
@@ -118,6 +232,8 @@ def run_once(
         "cleanup": {},
     }
     server = thread = bridge = None
+    lock_descriptor = None
+    interrupted = None
     port = None
     root_path = None
 
@@ -126,16 +242,19 @@ def run_once(
             tempfile.mkdtemp(prefix="grokbot2claw-replay-" if replay else "grokbot2claw-live-")
         )
         root_path = root
+        session_key = REPLAY_SESSION_KEY if replay else SESSION_KEY
+        lock_descriptor = acquire_session_lock(
+            agent, session_key, replay_root=root if replay else None
+        )
         db_path = root / "messages.db"
         if root_path:
             auth_path = root / "auth.json"
             adapters = root / "adapters"
-            scripts = root / "scripts"
             state = root / "state"
             bin_dir = root / "bin"
             proof_path = root / "cli-proof.json"
             marker_path = root / "model-invoked"
-            for directory in (adapters, scripts, state, bin_dir):
+            for directory in (adapters, state, bin_dir):
                 directory.mkdir()
 
             if replay:
@@ -165,7 +284,7 @@ import json, os, stat, sys
 from pathlib import Path
 args = sys.argv[1:]
 path = args[args.index("--message-file") + 1]
-assert args == ["agent", "--agent", AGENT, "--session-key", "grokbot2claw",
+assert args == ["agent", "--agent", AGENT, "--session-key", "grokbot2claw-replay",
                 "--message-file", path, "--timeout", "5", "--json"]
 info = os.stat(path)
 assert stat.S_ISREG(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600
@@ -198,21 +317,6 @@ assert "untrusted external message" in prompt
 
             (adapters / (agent + ".sh")).symlink_to(ROOT / "adapters" / "openclaw.sh")
             write_executable(
-                scripts / "send.sh",
-                """#!/bin/sh
-set -eu
-team=$1 from=$2 to=$3
-shift 3
-[ \"$1\" = --body ] && [ \"$2\" = - ]
-body=$(cat)
-python3 - \"$AGMSG_DB\" \"$team\" \"$from\" \"$to\" \"$body\" <<'PY'
-import sqlite3, sys
-with sqlite3.connect(sys.argv[1]) as db:
-    db.execute('INSERT INTO messages(team,from_agent,to_agent,body) VALUES(?,?,?,?)', sys.argv[2:6])
-PY
-""",
-            )
-            write_executable(
                 bin_dir / "openclaw",
                 """#!/usr/bin/env python3
 import json, os, re, stat, subprocess, sys
@@ -228,18 +332,6 @@ def safe_error_type(value):
     error = response_error(value)
     kind = error.get("type", error.get("kind")) if isinstance(error, dict) else None
     return kind if isinstance(kind, str) and re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", kind) else None
-
-def safe_error_message(value):
-    error = response_error(value)
-    message = error.get("message") if isinstance(error, dict) else None
-    if not isinstance(message, str):
-        return None
-    message = re.sub(r"[\\x00-\\x1f\\x7f]+", " ", message)
-    message = re.sub(r"(?i)\\b(authorization|bearer|password|secret|token)\\s*[:=]\\s*\\S+", r"\\1=[redacted]", message)
-    message = re.sub(r"\\b(?:https?|wss?)://\\S+", "[url]", message)
-    message = re.sub(r"(?:/[A-Za-z0-9._~!$&'()*+,;=:@%-]+){2,}", "[path]", message)
-    message = re.sub(r"\\b[A-Za-z0-9_-]{32,}\\b", "[redacted]", message)
-    return " ".join(message.split())[:400] or None
 
 marker = os.environ["AGMSG_LIVE_RUN_MARKER"]
 try:
@@ -279,7 +371,6 @@ try:
         "run_id": value.get("runId") if isinstance(value, dict) else None,
         "origin": value.get("origin") if isinstance(value, dict) else None,
         "error_type": safe_error_type(value),
-        "error_message": safe_error_message(value),
         "duration_ms": meta.get("durationMs") if isinstance(meta, dict) else None,
         "session_id": agent_meta.get("sessionId") if isinstance(agent_meta, dict) else None,
         "model": agent_meta.get("model") if isinstance(agent_meta, dict) else None,
@@ -313,7 +404,6 @@ raise SystemExit(completed.returncode)
             env.update(
                 {
                     "AGMSG_DB": str(db_path),
-                    "AGMSG_SCRIPTS": str(scripts),
                     "AGMSG_BRIDGE_TEAM": "localtest",
                     "AGMSG_BRIDGE_AGENTS": agent,
                     "AGMSG_BRIDGE_ADAPTERS": str(adapters),
@@ -324,7 +414,7 @@ raise SystemExit(completed.returncode)
                     "AGMSG_BRIDGE_ADAPTER_TIMEOUT": "270",
                     "OPENCLAW_BIN": str(bin_dir / "openclaw"),
                     "OPENCLAW_AGENT": agent,
-                    "OPENCLAW_SESSION_KEY": "grokbot2claw",
+                    "OPENCLAW_SESSION_KEY": session_key,
                     "OPENCLAW_TIMEOUT": "5" if replay else "240",
                     "TMPDIR": str(root),
                     "AGMSG_REAL_OPENCLAW": real_openclaw,
@@ -403,11 +493,19 @@ raise SystemExit(completed.returncode)
             and isinstance(result["cli_proof"], dict)
             and result["cli_proof"].get("exit_code") == 0
         )
+    except SignalInterruption as error:
+        interrupted = error
+        for signum in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+            signal.signal(signum, signal.SIG_IGN)
+    except SessionBusyError as error:
+        result["failure"] = type(error).__name__ + ": " + str(error)
+        result["error_code"] = "session_busy"
     except Exception as error:
         result["failure"] = type(error).__name__ + ": " + str(error)
     finally:
         if server is not None:
-            server.shutdown()
+            if thread is not None and thread.is_alive():
+                server.shutdown()
             server.server_close()
         if thread is not None:
             thread.join(timeout=5)
@@ -427,6 +525,10 @@ raise SystemExit(completed.returncode)
             root_path and not root_path.exists()
         )
         result["duration_seconds"] = round(time.monotonic() - started, 3)
+        release_session_lock(lock_descriptor)
+
+    if interrupted is not None:
+        raise interrupted
 
     return result
 
@@ -453,13 +555,21 @@ def main():
         + expected
         + ". Do not call tools, read files, change state, send messages, or start further tasks."
     )
-    result = run_once(
-        prompt,
-        agent=args.agent,
-        replay=args.replay,
-        expected_reply=expected,
-        principal="local-smoke",
-    )
+    try:
+        with signal_guard():
+            result = run_once(
+                prompt,
+                agent=args.agent,
+                replay=args.replay,
+                expected_reply=expected,
+                principal="local-smoke",
+            )
+    except SignalInterruption as error:
+        print(
+            "runtime interrupted; local resources were stopped; upstream work may continue",
+            file=sys.stderr,
+        )
+        raise SystemExit(128 + error.signum) from None
     # Keep the historical smoke proof nonce stable at the outer command boundary.
     result["nonce"] = nonce
     print(json.dumps(result, indent=2, sort_keys=True))

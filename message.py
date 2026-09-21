@@ -11,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from runtime import run_once
+from runtime import SignalInterruption, run_once, signal_guard
 
 MAX_MESSAGE_BYTES = 8 * 1024
 AGENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
@@ -47,23 +47,46 @@ def prepare_output_directory(path):
         run_directory = Path(tempfile.mkdtemp(prefix="grokbot2claw-", dir=str(root)))
         run_directory.chmod(0o700)
         return run_directory.resolve()
-    except OSError:
+    except BaseException as error:
         if run_directory:
-            with contextlib.suppress(OSError):
-                run_directory.rmdir()
+            cleanup_run_directory(run_directory)
+        if not isinstance(error, OSError):
+            raise
         raise ValueError("cannot prepare output directory") from None
 
 
 def save_result(run_directory, output):
     data = (json.dumps(output, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
     path = run_directory / "result.json"
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(descriptor, "wb") as stream:
-        stream.write(data)
-    return path, hashlib.sha256(data).hexdigest()
+    descriptor, temporary = tempfile.mkstemp(prefix=".result-", dir=run_directory)
+    try:
+        os.fchmod(descriptor, 0o600)
+        stream = os.fdopen(descriptor, "wb")
+        descriptor = None
+        with stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, path, follow_symlinks=False)
+        os.unlink(temporary)
+        return path, hashlib.sha256(data).hexdigest()
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
 
 
-def main(argv=None, runner=run_once):
+def cleanup_run_directory(run_directory):
+    if not run_directory:
+        return
+    with contextlib.suppress(OSError):
+        for child in run_directory.iterdir():
+            child.unlink()
+        run_directory.rmdir()
+
+
+def _main(argv=None, runner=run_once):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--send", action="store_true", help="authorize exactly one OpenClaw invocation"
@@ -97,31 +120,24 @@ def main(argv=None, runner=run_once):
             run_directory = prepare_output_directory(args.output_dir)
         result = runner(message, agent=args.agent, principal="grokbot-macshell")
     except ValueError as error:
-        if run_directory:
-            run_directory.rmdir()
+        cleanup_run_directory(run_directory)
         print("message command: " + str(error), file=sys.stderr)
         return 2
     except RuntimeError as error:
-        if run_directory:
-            run_directory.rmdir()
+        cleanup_run_directory(run_directory)
         detail = str(error) if str(error) == "openclaw executable not found" else "internal failure"
         print("message command failed: " + detail, file=sys.stderr)
         return 1
     except (OSError, TimeoutError):
-        if run_directory:
-            run_directory.rmdir()
+        cleanup_run_directory(run_directory)
         print("message command failed: internal failure", file=sys.stderr)
         return 1
-    except KeyboardInterrupt:
-        if run_directory:
-            run_directory.rmdir()
-        print("message command: interrupted; temporary resources were stopped", file=sys.stderr)
-        return 130
-
+    except SignalInterruption:
+        cleanup_run_directory(run_directory)
+        raise
     clean = result.get("cleanup", {})
     if not result.get("passed") or not clean or not all(clean.values()):
-        if run_directory:
-            run_directory.rmdir()
+        cleanup_run_directory(run_directory)
         code = result.get("error_code") or result.get("final_status") or "internal_failure"
         print("message command failed: " + str(code), file=sys.stderr)
         return 1
@@ -134,9 +150,11 @@ def main(argv=None, runner=run_once):
     if run_directory:
         try:
             path, digest = save_result(run_directory, output)
+        except SignalInterruption:
+            cleanup_run_directory(run_directory)
+            raise
         except OSError:
-            with contextlib.suppress(OSError):
-                run_directory.rmdir()
+            cleanup_run_directory(run_directory)
             print("message command failed: cannot save result", file=sys.stderr)
             return 1
         print(
@@ -157,6 +175,18 @@ def main(argv=None, runner=run_once):
         if not output["reply"].endswith("\n"):
             sys.stdout.write("\n")
     return 0
+
+
+def main(argv=None, runner=run_once):
+    try:
+        with signal_guard():
+            return _main(argv, runner)
+    except SignalInterruption as error:
+        print(
+            "message command: interrupted; local resources were stopped; upstream work may continue",
+            file=sys.stderr,
+        )
+        return 128 + error.signum
 
 
 if __name__ == "__main__":

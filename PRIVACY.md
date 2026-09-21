@@ -1,6 +1,6 @@
 # Privacy Policy: GrokBot2Claw
 
-**Last updated:** September 20, 2026
+**Last updated:** September 21, 2026
 
 GrokBot2Claw is a local command-line bridge. It runs on your machine, talks only to itself over loopback and to your local OpenClaw CLI, and keeps no service running between commands.
 
@@ -24,9 +24,9 @@ All three travel through a temporary SQLite mailbox and a loopback HTTP listener
 - a `messages.db` SQLite mailbox
 - a prompt file passed to OpenClaw, mode `0600`
 - a small JSON record of the OpenClaw CLI result (run id, status, session id, model, provider, tool summary) used to build the reply
-- dispatch counters, lock markers, and wrapper scripts used by the bridge
+- dispatch counters, temporary reply files, and wrapper scripts used by the bridge
 
-The command removes this directory, the listener, and the bridge process group when it exits, including on failure or interruption.
+The command removes this directory, the listener, and the bridge process group when it exits, including on failure or catchable interruption (`SIGHUP`, `SIGINT`, or `SIGTERM`). `SIGKILL` cannot be handled. A provider request already accepted upstream may continue after local cleanup.
 
 **After a command**, only if you pass `--output-dir`:
 
@@ -36,11 +36,13 @@ This file persists until you delete it. It can contain private prompt-derived co
 
 **Outside this repository**, OpenClaw keeps its own session history. Each command uses the session key `grokbot2claw`, so the conversation `agent:YOUR_AGENT_ID:grokbot2claw` persists in OpenClaw's storage under OpenClaw's rules. Anything in a message may remain there.
 
+The bridge also keeps one lock file per local agent/session. It lives in an owner-only `grokbot2claw-locks-USER_ID` directory under a secure `XDG_RUNTIME_DIR`, or the platform temporary directory otherwise. The directory is `0700`; lock files are `0600` and contain only the agent id, fixed session key, and current process id. Lock files persist so every process locks the same inode; they are never unlinked during normal operation. Synthetic replay uses a distinct session key and a lock inside its temporary run directory, so replay cannot collide with a live session.
+
 ## What it does not do
 
 - No analytics, telemetry, or phone-home behavior
 - No outbound network requests from the bridge itself; the only network use is loopback `127.0.0.1`
-- No log files: the bridge process's diagnostic output is discarded, and nothing is appended to a persistent log
+- No message snippets in bridge diagnostics and no log files: this project does not log prompt or reply bodies, the normal bridge process's diagnostic output is discarded, and nothing is appended to a persistent log. OpenClaw and its provider remain governed by their own logging policies.
 - No global configuration changes to Grok Bot, OpenClaw, or your shell
 - No collection of Grok account data; the principal label records that a command came through this workflow and is not an identity check
 

@@ -18,7 +18,6 @@ set -uo pipefail
 
 # ---- config (override via env / AGMSG_BRIDGE_ENV) -------------------------
 AGMSG_DIR="${AGMSG_DIR:-$HOME/.agents/skills/agmsg}"
-SCRIPTS="${AGMSG_SCRIPTS:-$AGMSG_DIR/scripts}"
 DB="${AGMSG_DB:-$AGMSG_DIR/db/messages.db}"
 TEAM="${AGMSG_BRIDGE_TEAM:-team}"
 SERVED="${AGMSG_BRIDGE_AGENTS:-}"               # space-separated agents to answer for
@@ -42,6 +41,38 @@ track_status(){ # $1=id $2=status [$3=error]; completed reply arrives on stdin
   else
     python3 "$HTTP_STATUS" --db "$DB" --update-status "$1" --status "$2"
   fi >/dev/null 2>&1 || log "ERROR updating HTTP status for msg $1"
+}
+send_reply(){ # $1=file $2=from $3=to
+  python3 - "$DB" "$TEAM" "$1" "$2" "$3" <<'PY'
+import sqlite3
+import sys
+from pathlib import Path
+
+body = Path(sys.argv[3]).read_bytes().decode("utf-8")
+with sqlite3.connect(sys.argv[1]) as db:
+    db.execute(
+        "INSERT INTO messages(team,from_agent,to_agent,body) VALUES(?,?,?,?)",
+        (sys.argv[2], sys.argv[4], sys.argv[5], body),
+    )
+PY
+}
+validate_reply(){ # $1=file; 0=valid, 3=empty, 4=too large, 5=invalid text
+  python3 - "$1" <<'PY'
+import sys
+from pathlib import Path
+
+data = Path(sys.argv[1]).read_bytes()
+if not data:
+    raise SystemExit(3)
+if len(data) > 8192:
+    raise SystemExit(4)
+try:
+    text = data.decode("utf-8")
+except UnicodeDecodeError:
+    raise SystemExit(5)
+if any((ord(char) < 32 and char not in "\t\n\r") or ord(char) == 127 for char in text):
+    raise SystemExit(5)
+PY
 }
 
 # ---- rate / loop guards ---------------------------------------------------
@@ -120,33 +151,48 @@ PY
 # to a faster one. An $STATE/inflight.<agent> lock caps each agent to one
 # in-flight turn at a time.
 dispatch_async(){
-  local agent="$1" id="$2" from="$3" body="$4" tracked="$5" prompt reply reply_bytes
+  local agent="$1" id="$2" from="$3" body="$4" tracked="$5" prompt reply_file validation
   prompt="Message from '$from' via agmsg: $body"
   (
-    [ "$tracked" = 1 ] && track_status "$id" processing </dev/null
-    if ! reply=$(invoke_agent "$agent" "$prompt"); then
+    reply_file=$(mktemp "$STATE/reply.$agent.XXXXXX") || {
       [ "$tracked" = 1 ] && track_status "$id" failed adapter_failed </dev/null
-      log "adapter failed for $agent on msg $id"
+      log "cannot create private reply file for $agent on msg $id"
       rm -f "$STATE/inflight.$agent"
       exit 0
+    }
+    chmod 600 "$reply_file"
+    trap 'rm -f "$reply_file" "$STATE/inflight.$agent"' EXIT HUP INT TERM
+    [ "$tracked" = 1 ] && track_status "$id" processing </dev/null
+    if ! invoke_agent "$agent" "$prompt" >"$reply_file"; then
+      [ "$tracked" = 1 ] && track_status "$id" failed adapter_failed </dev/null
+      log "adapter failed for $agent on msg $id"
+      exit 0
     fi
-    if [ -n "$reply" ]; then
-      reply_bytes=$(printf '%s' "$reply" | wc -c | tr -d ' ')
-      if [ "$reply_bytes" -gt 8192 ]; then
-        [ "$tracked" = 1 ] && track_status "$id" failed reply_too_large </dev/null
-        log "reply too large from $agent for msg $id"
-      elif printf '%s' "$reply" | bash "$SCRIPTS/send.sh" "$TEAM" "$agent" "$from" --body - >/dev/null 2>&1; then
-        [ "$tracked" = 1 ] && printf '%s' "$reply" | track_status "$id" completed
-        log "reply $agent -> $from (${#reply} chars)"
+    validation=0
+    validate_reply "$reply_file" || validation=$?
+    case "$validation" in
+      0)
+      if send_reply "$reply_file" "$agent" "$from" >/dev/null 2>&1; then
+        [ "$tracked" = 1 ] && track_status "$id" completed <"$reply_file"
+        log "reply delivered $agent -> $from"
       else
         [ "$tracked" = 1 ] && track_status "$id" failed reply_delivery_failed </dev/null
         log "ERROR posting reply $agent -> $from"
       fi
-    else
-      [ "$tracked" = 1 ] && track_status "$id" failed no_reply </dev/null
-      log "no reply captured from $agent for msg $id"
-    fi
-    rm -f "$STATE/inflight.$agent"
+      ;;
+      3)
+        [ "$tracked" = 1 ] && track_status "$id" failed no_reply </dev/null
+        log "no reply captured from $agent for msg $id"
+      ;;
+      4)
+        [ "$tracked" = 1 ] && track_status "$id" failed reply_too_large </dev/null
+        log "reply too large from $agent for msg $id"
+      ;;
+      *)
+        [ "$tracked" = 1 ] && track_status "$id" failed invalid_reply </dev/null
+        log "invalid reply text from $agent for msg $id"
+      ;;
+    esac
   ) &
 }
 
@@ -195,7 +241,7 @@ while true; do
     fi
     record_dispatch
 
-    log "dispatch msg $id: $from -> $agent: ${body:0:70}"
+    log "dispatch msg $id: $from -> $agent"
     : > "$STATE/inflight.$agent"
     dispatch_async "$agent" "$id" "$from" "$body" "$tracked"
   done

@@ -71,20 +71,11 @@ path = sys.argv[1]
 cli_status = int(sys.argv[2])
 
 
-def safe_error(error):
+def safe_error_type(error):
     error_type = error.get("type", error.get("kind")) if isinstance(error, dict) else None
     if not isinstance(error_type, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", error_type):
         error_type = "unknown"
-    message = error.get("message") if isinstance(error, dict) else None
-    if not isinstance(message, str):
-        return error_type, ""
-    message = re.sub(r"[\x00-\x1f\x7f]+", " ", message)
-    message = re.sub(r"(?i)\b(authorization|bearer|password|secret|token)\s*[:=]\s*\S+", r"\1=[redacted]", message)
-    message = re.sub(r"\b(?:https?|wss?)://\S+", "[url]", message)
-    message = re.sub(r"(?:/[A-Za-z0-9._~!$&'()*+,;=:@%-]+){2,}", "[path]", message)
-    message = re.sub(r"\b[A-Za-z0-9_-]{32,}\b", "[redacted]", message)
-    message = " ".join(message.split())
-    return error_type, message[:400]
+    return error_type
 
 
 try:
@@ -112,10 +103,8 @@ if not isinstance(meta, dict):
 error = value["error"] if value.get("error") is not None else meta.get("error")
 if (cli_status or value.get("ok") is False or error is not None
         or value.get("status") not in ("ok", "completed")):
-    error_type, message = safe_error(error)
+    error_type = safe_error_type(error)
     detail = f" (exit {cli_status}; type={error_type})"
-    if message:
-        detail += f": {message}"
     reject("OpenClaw command failed" + detail)
 if "ok" in value and value["ok"] is not True:
     reject("unexpected success flag")

@@ -190,6 +190,40 @@ class HTTPTest(unittest.TestCase):
         client.close()
         self.assertIn(b" 408 ", response)
 
+    def test_stalled_request_line_and_header_release_connection_slot(self):
+        for index, partial in enumerate((b"P", b"GET / HTTP/1.1\r\nX-Test: ")):
+            with self.subTest(partial=partial):
+                server = http_server.create_server(
+                    "127.0.0.1",
+                    0,
+                    str(self.db),
+                    "testteam",
+                    str(self.auth),
+                    read_timeout=0.15,
+                    db_timeout=0.1,
+                    max_connections=1,
+                )
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                port = server.server_address[1]
+                stalled = socket.create_connection(("127.0.0.1", port), timeout=2)
+                stalled.sendall(partial)
+                blocked = socket.create_connection(("127.0.0.1", port), timeout=2)
+                blocked.sendall(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                self.assertIn(b"503", blocked.recv(4096))
+                blocked.close()
+                time.sleep(0.25)
+                stalled.close()
+                connection = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                connection.request("GET", "/")
+                response = connection.getresponse()
+                response.read()
+                connection.close()
+                self.assertEqual(response.status, 404, index)
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
     def test_auth_file_must_be_private(self):
         self.auth.chmod(0o644)
         with self.assertRaisesRegex(ValueError, "mode 0600"):
@@ -217,9 +251,8 @@ class HTTPTest(unittest.TestCase):
 
     def test_bridge_end_to_end_uses_body_as_data(self):
         adapters = self.root / "adapters"
-        scripts = self.root / "scripts"
         state = self.root / "state"
-        for directory in (adapters, scripts, state):
+        for directory in (adapters, state):
             directory.mkdir()
         capture = self.root / "captured.txt"
         child_pid = self.root / "child.pid"
@@ -233,34 +266,22 @@ case "$1" in
     printf '%s' "$child" > "$CHILD_PID"
     wait "$child"
     ;;
+  *invalid-utf8*) printf '\\377' ;;
+  *invalid-control*) printf 'unsafe\\001reply' ;;
   *)
     printf '%s' "$1" > "$CAPTURE"
-    printf '%s' 'synthetic fixture reply'
+    printf 'synthetic fixture reply\n\n'
     ;;
 esac
 """
         )
         (adapters / "rusty.sh").chmod(0o700)
-        (scripts / "send.sh").write_text("""#!/bin/sh
-set -eu
-team=$1 from=$2 to=$3
-shift 3
-[ \"$1\" = --body ] && [ \"$2\" = - ]
-body=$(cat)
-python3 - \"$AGMSG_DB\" \"$team\" \"$from\" \"$to\" \"$body\" <<'PY'
-import sqlite3,sys
-with sqlite3.connect(sys.argv[1]) as db:
-    db.execute('INSERT INTO messages(team,from_agent,to_agent,body) VALUES(?,?,?,?)', sys.argv[2:6])
-PY
-""")
-        (scripts / "send.sh").chmod(0o700)
-        dangerous = f"literal $(touch {marker}); `false`; 'quotes'"
+        dangerous = f"PROMPT_PRIVATE_9f3 $(touch {marker}); `false`; 'quotes'"
         _, sent = self.request("POST", "/messages", self.message("bridge-e2e", dangerous))
         env = os.environ.copy()
         env.update(
             {
                 "AGMSG_DB": str(self.db),
-                "AGMSG_SCRIPTS": str(scripts),
                 "AGMSG_BRIDGE_TEAM": "testteam",
                 "AGMSG_BRIDGE_AGENTS": "rusty",
                 "AGMSG_BRIDGE_ADAPTERS": str(adapters),
@@ -294,14 +315,31 @@ PY
                 if timed_result["status"] in ("completed", "failed"):
                     break
                 time.sleep(0.05)
+            invalid_results = []
+            for key, body in (
+                ("bridge-invalid-utf8", "invalid-utf8"),
+                ("bridge-invalid-control", "invalid-control"),
+            ):
+                _, invalid = self.request("POST", "/messages", self.message(key, body))
+                deadline = time.time() + 5
+                while time.time() < deadline:
+                    _, invalid_result = self.request("GET", "/messages/" + invalid["id"])
+                    if invalid_result["status"] in ("completed", "failed"):
+                        break
+                    time.sleep(0.05)
+                invalid_results.append(invalid_result)
         finally:
             process.terminate()
             output = process.communicate(timeout=2)[0]
         self.assertEqual(
-            (result["status"], result["reply"]), ("completed", "synthetic fixture reply"), output
+            (result["status"], result["reply"]),
+            ("completed", "synthetic fixture reply\n\n"),
+            output,
         )
         self.assertIn(dangerous, capture.read_text())
         self.assertFalse(marker.exists())
+        self.assertNotIn("PROMPT_PRIVATE_9f3", output)
+        self.assertNotIn("synthetic fixture reply", output)
         self.assertEqual(
             (timed_result["status"], timed_result["error"]), ("failed", "adapter_failed"), output
         )
@@ -309,6 +347,10 @@ PY
         timed_out_child = int(child_pid.read_text())
         with self.assertRaises(ProcessLookupError):
             os.kill(timed_out_child, 0)
+        self.assertEqual(
+            [(item["status"], item["error"]) for item in invalid_results],
+            [("failed", "invalid_reply"), ("failed", "invalid_reply")],
+        )
 
 
 if __name__ == "__main__":

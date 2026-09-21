@@ -3,14 +3,17 @@ import hashlib
 import io
 import json
 import os
+import signal
 import subprocess
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
 import message
+import runtime
 from runtime import run_once
 
 
@@ -91,7 +94,7 @@ class MessageCommandTest(unittest.TestCase):
         )
 
     def test_output_directory_saves_exact_json_and_prints_compact_receipt(self):
-        reply = 'line one\n`code` "quotes" — 世界'
+        reply = 'line one\n`code` "quotes" — 世界\n\n'
         result = {
             "passed": True,
             "request_id": "fixture-id",
@@ -128,6 +131,62 @@ class MessageCommandTest(unittest.TestCase):
         self.assertEqual(receipt["sha256"], hashlib.sha256(data).hexdigest())
         self.assertEqual(os.stat(result_path.parent).st_mode & 0o777, 0o700)
         self.assertEqual(os.stat(result_path).st_mode & 0o777, 0o600)
+
+    def test_result_write_is_atomic_write_once_and_cleans_failed_temporary_file(self):
+        run_directory = self.root / "run"
+        run_directory.mkdir(mode=0o700)
+        final = run_directory / "result.json"
+        final.write_text("operator artifact")
+        with self.assertRaises(FileExistsError):
+            message.save_result(run_directory, {"reply": "private reply"})
+        self.assertEqual(final.read_text(), "operator artifact")
+        self.assertEqual(list(run_directory.iterdir()), [final])
+
+        final.unlink()
+        with mock.patch.object(message.os, "link", side_effect=OSError("fixture failure")):
+            with self.assertRaises(OSError):
+                message.save_result(run_directory, {"reply": "private reply"})
+        self.assertEqual(list(run_directory.iterdir()), [])
+
+    def test_signal_during_result_write_removes_run_directory(self):
+        message_path = self.root / "message.txt"
+        message_path.write_text("private prompt")
+        output_root = self.root / "results"
+        result = {
+            "passed": True,
+            "request_id": "fixture-id",
+            "actual_reply": "private reply",
+            "cleanup": {"port_closed": True},
+        }
+        with mock.patch.object(
+            message.os, "fsync", side_effect=runtime.SignalInterruption(signal.SIGTERM)
+        ):
+            status, stdout, stderr = self.call_main(
+                [
+                    "--send",
+                    "--agent",
+                    "docs-agent",
+                    "--message-file",
+                    str(message_path),
+                    "--output-dir",
+                    str(output_root),
+                ],
+                mock.Mock(return_value=result),
+            )
+        self.assertEqual((status, stdout), (143, ""))
+        self.assertIn("upstream work may continue", stderr)
+        self.assertEqual(list(output_root.iterdir()), [])
+
+    def test_sighup_returns_conventional_status_without_private_detail(self):
+        message_path = self.root / "message.txt"
+        message_path.write_text("PROMPT_PRIVATE_HUP")
+        status, stdout, stderr = self.call_main(
+            ["--send", "--agent", "docs-agent", "--message-file", str(message_path)],
+            mock.Mock(side_effect=runtime.SignalInterruption(signal.SIGHUP)),
+        )
+        self.assertEqual((status, stdout), (129, ""))
+        self.assertIn("upstream work may continue", stderr)
+        self.assertNotIn("PROMPT_PRIVATE_HUP", stderr)
 
     def test_invalid_output_directory_is_rejected_before_runner(self):
         message_path = self.root / "message.txt"
@@ -298,6 +357,161 @@ class MessageCommandTest(unittest.TestCase):
         self.assertEqual(counter.read_text(), "1")
         self.assertEqual(result["cli_invocations"], 1)
         self.assertTrue(all(result["cleanup"].values()))
+
+    def test_interruption_during_setup_cleans_ephemeral_resources(self):
+        scratch = self.root / "scratch"
+        scratch.mkdir()
+        for target in ("write_executable", "thread"):
+            with self.subTest(target=target):
+                patch = (
+                    mock.patch.object(
+                        runtime,
+                        "write_executable",
+                        side_effect=runtime.SignalInterruption(signal.SIGHUP),
+                    )
+                    if target == "write_executable"
+                    else mock.patch.object(
+                        runtime.threading,
+                        "Thread",
+                        side_effect=runtime.SignalInterruption(signal.SIGHUP),
+                    )
+                )
+                with mock.patch.dict(os.environ, {"TMPDIR": str(scratch)}), patch:
+                    with self.assertRaises(runtime.SignalInterruption) as caught:
+                        with runtime.signal_guard():
+                            run_once(
+                                "private prompt",
+                                agent="setup-agent",
+                                replay=True,
+                                expected_reply="private reply",
+                            )
+                self.assertEqual(caught.exception.signum, signal.SIGHUP)
+                self.assertEqual(list(scratch.iterdir()), [])
+
+    def test_cross_process_session_lock_and_signal_release(self):
+        runtime_dir = self.root / "runtime"
+        scratch = self.root / "scratch"
+        output_root = self.root / "results"
+        runtime_dir.mkdir(mode=0o700)
+        scratch.mkdir(mode=0o700)
+        calls = self.root / "calls"
+        started = self.root / "started"
+        child_pid = self.root / "child-pid"
+        fake = self.root / "locking-openclaw"
+        fake.write_text(
+            textwrap.dedent(f"""\
+            #!/usr/bin/env python3
+            import json, os, sys, time
+            from pathlib import Path
+            args = sys.argv[1:]
+            agent = args[args.index("--agent") + 1]
+            with Path({str(calls)!r}).open("a") as stream:
+                stream.write(agent + "\\n")
+            Path({str(started)!r}).write_text(agent)
+            delay = float(os.environ.get("FIXTURE_SLEEP", "0"))
+            if delay:
+                Path({str(child_pid)!r}).write_text(str(os.getpid()))
+            time.sleep(delay)
+            print(json.dumps({{"runId": "fixture-run", "status": "ok", "result": {{
+                "payloads": [{{"text": "fixture reply", "mediaUrl": None}}],
+                "meta": {{"agentMeta": {{"sessionId": "fixture", "model": "fixture",
+                "provider": "fixture"}}}}
+            }}}}))
+            """
+            )
+        )
+        fake.chmod(0o700)
+        message_path = self.root / "message.txt"
+        message_path.write_text("PROMPT_PRIVATE_LOCK")
+        env = os.environ.copy()
+        env.update(
+            {
+                "XDG_RUNTIME_DIR": str(runtime_dir),
+                "TMPDIR": str(scratch),
+                "FIXTURE_SLEEP": "30",
+                "PATH": str(self.root) + os.pathsep + env["PATH"],
+            }
+        )
+        # message.py normally discovers openclaw; provide the fixture under that fixed name.
+        (self.root / "openclaw").symlink_to(fake)
+        first = subprocess.Popen(
+            [
+                "python3",
+                str(Path(message.__file__)),
+                "--send",
+                "--agent",
+                "same-agent",
+                "--message-file",
+                str(message_path),
+                "--output-dir",
+                str(output_root),
+            ],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        deadline = time.time() + 8
+        while time.time() < deadline and not started.exists():
+            time.sleep(0.05)
+        self.assertTrue(started.exists(), "fixture CLI did not start")
+
+        child_code = (
+            "import json,sys; from runtime import run_once; "
+            "print(json.dumps(run_once('PROMPT_PRIVATE_LOCK', agent=sys.argv[1], "
+            "real_openclaw=sys.argv[2], expected_reply='fixture reply')))"
+        )
+        second_env = dict(env, FIXTURE_SLEEP="0")
+        same = subprocess.run(
+            ["python3", "-c", child_code, "same-agent", str(fake)],
+            cwd=Path(message.__file__).parent,
+            env=second_env,
+            text=True,
+            capture_output=True,
+            timeout=10,
+        )
+        same_result = json.loads(same.stdout)
+        self.assertEqual(same_result["error_code"], "session_busy")
+        self.assertEqual(same_result["cli_invocations"], 0)
+        different = subprocess.run(
+            ["python3", "-c", child_code, "different-agent", str(fake)],
+            cwd=Path(message.__file__).parent,
+            env=second_env,
+            text=True,
+            capture_output=True,
+            timeout=15,
+        )
+        self.assertTrue(json.loads(different.stdout)["passed"], different.stderr)
+
+        first.send_signal(signal.SIGTERM)
+        stdout, stderr = first.communicate(timeout=15)
+        self.assertEqual((first.returncode, stdout), (143, ""))
+        self.assertIn("upstream work may continue", stderr)
+        self.assertNotIn("PROMPT_PRIVATE_LOCK", stderr)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int(child_pid.read_text()), 0)
+        self.assertEqual(list(output_root.iterdir()), [])
+        self.assertEqual(list(scratch.glob("grokbot2claw-live-*")), [])
+
+        subsequent = subprocess.run(
+            ["python3", "-c", child_code, "same-agent", str(fake)],
+            cwd=Path(message.__file__).parent,
+            env=second_env,
+            text=True,
+            capture_output=True,
+            timeout=15,
+        )
+        self.assertTrue(json.loads(subsequent.stdout)["passed"], subsequent.stderr)
+        self.assertEqual(calls.read_text().splitlines().count("same-agent"), 2)
+        self.assertIn("different-agent", calls.read_text().splitlines())
+
+        lock_directory = runtime_dir / f"grokbot2claw-locks-{os.getuid()}"
+        self.assertEqual(os.stat(lock_directory).st_mode & 0o777, 0o700)
+        for lock in lock_directory.iterdir():
+            self.assertEqual(os.stat(lock).st_mode & 0o777, 0o600)
+            metadata = lock.read_text()
+            self.assertNotIn("PROMPT_PRIVATE_LOCK", metadata)
+            self.assertIn('"session_key":"grokbot2claw"', metadata)
 
 
 if __name__ == "__main__":

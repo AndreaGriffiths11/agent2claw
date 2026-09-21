@@ -63,6 +63,7 @@ Review each Mac Shell request. Never put credentials in a message. Full walkthro
 - **The sender cannot choose** the agent, session, executable, CLI flags, or delivery route.
 - **Loopback only.** The HTTP server binds to `127.0.0.1` with a fresh bearer token and lives for one command.
 - **No daemon, retry loop, web UI, or MCP server.** Every run requires `--send`.
+- **One local command per agent session.** An owner-only cross-process lock rejects overlap for the fixed persistent session before OpenClaw is invoked. It does not coordinate other machines or guarantee that timed-out provider work has stopped.
 - **No identity proof for "Grok."** The principal label records the local workflow, not an authenticated Grok account.
 
 Details and guardrails: [Responsible Use](docs/responsible-use.md). To report a vulnerability, follow [SECURITY.md](SECURITY.md) and do not open a public issue.

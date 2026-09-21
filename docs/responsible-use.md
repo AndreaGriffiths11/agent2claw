@@ -30,6 +30,7 @@ Use it when:
 - **Every run requires `--send`.** There is no background daemon, retry loop, always-on peer, web UI, or MCP server.
 - **Mac Shell approval remains the control point.** Treat requests from a model as untrusted input and approve only bounded tasks you understand.
 - **No identity proof for "Grok."** The internal principal label records that the command came through this local workflow; it is not cryptographic authentication of a Grok account or bot.
+- **Session continuity is intentional and locally serialized.** Commands for one agent reuse `agent:YOUR_AGENT_ID:grokbot2claw`. A per-user file lock rejects another local GrokBot2Claw command for that agent/session before invocation. It does not cover other hosts, direct OpenClaw use, or provider-side work already accepted.
 - **Chat output is not a byte-preserving file transport.** A prior response became garbled after valid JSON left this command, but the exact corruption point was not established. Use `--output-dir` and verify the receipt hash when exact output matters.
 
 ## Guardrails
@@ -58,7 +59,7 @@ Messages travel through a temporary local mailbox and into the OpenClaw session 
 
 ### Expect remote work to outlive local cancellation
 
-Stopping the local command cleans up the listener and temporary files. A provider request already accepted by the OpenClaw Gateway may continue. Check the dedicated session before retrying.
+`SIGHUP`, `SIGINT`, and `SIGTERM` route through bounded local cleanup of the listener, bridge process group, lock, and temporary files. `SIGKILL` cannot be handled. A provider request already accepted by the OpenClaw Gateway may continue even after the local CLI process is stopped. Check the dedicated session before retrying; do not treat lock release as proof of remote cancellation.
 
 ## Reporting a problem
 
