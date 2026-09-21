@@ -2,6 +2,7 @@
 """Send one explicitly authorized message to a configured OpenClaw agent."""
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -48,10 +49,8 @@ def prepare_output_directory(path):
         return run_directory.resolve()
     except OSError:
         if run_directory:
-            try:
+            with contextlib.suppress(OSError):
                 run_directory.rmdir()
-            except OSError:
-                pass
         raise ValueError("cannot prepare output directory") from None
 
 
@@ -66,12 +65,23 @@ def save_result(run_directory, output):
 
 def main(argv=None, runner=run_once):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--send", action="store_true", help="authorize exactly one OpenClaw invocation")
-    parser.add_argument("--agent", required=True, metavar="ID", help="operator-selected OpenClaw agent id")
-    parser.add_argument("--message-file", metavar="PATH", help="read UTF-8 message from PATH, or - for stdin")
-    parser.add_argument("--json", action="store_true", help="print the full response as stable JSON")
-    parser.add_argument("--output-dir", metavar="DIRECTORY",
-                        help="save full response JSON in a private run directory and print a compact receipt")
+    parser.add_argument(
+        "--send", action="store_true", help="authorize exactly one OpenClaw invocation"
+    )
+    parser.add_argument(
+        "--agent", required=True, metavar="ID", help="operator-selected OpenClaw agent id"
+    )
+    parser.add_argument(
+        "--message-file", metavar="PATH", help="read UTF-8 message from PATH, or - for stdin"
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="print the full response as stable JSON"
+    )
+    parser.add_argument(
+        "--output-dir",
+        metavar="DIRECTORY",
+        help="save full response JSON in a private run directory and print a compact receipt",
+    )
     args = parser.parse_args(argv)
     if not args.send:
         parser.error("refusing to invoke OpenClaw without --send")
@@ -125,18 +135,21 @@ def main(argv=None, runner=run_once):
         try:
             path, digest = save_result(run_directory, output)
         except OSError:
-            try:
+            with contextlib.suppress(OSError):
                 run_directory.rmdir()
-            except OSError:
-                pass
             print("message command failed: cannot save result", file=sys.stderr)
             return 1
-        print(json.dumps({
-            "status": "completed",
-            "request_id": output["request_id"],
-            "result_path": str(path),
-            "sha256": digest,
-        }, separators=(",", ":")))
+        print(
+            json.dumps(
+                {
+                    "status": "completed",
+                    "request_id": output["request_id"],
+                    "result_path": str(path),
+                    "sha256": digest,
+                },
+                separators=(",", ":"),
+            )
+        )
     elif args.json:
         print(json.dumps(output, ensure_ascii=False, separators=(",", ":")))
     else:

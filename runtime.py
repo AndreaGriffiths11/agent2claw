@@ -19,7 +19,6 @@ from pathlib import Path
 
 import http_server
 
-
 ROOT = Path(__file__).resolve().parent
 SCHEMA = """
 CREATE TABLE messages (
@@ -82,8 +81,15 @@ def write_executable(path, text):
     path.chmod(0o700)
 
 
-def run_once(prompt, *, agent, replay=False, expected_reply=None, real_openclaw=None,
-             principal="grokbot-macshell"):
+def run_once(
+    prompt,
+    *,
+    agent,
+    replay=False,
+    expected_reply=None,
+    real_openclaw=None,
+    principal="grokbot-macshell",
+):
     """Run one message through ephemeral HTTP, mailbox, bridge, and adapter resources."""
     if not isinstance(agent, str) or not AGENT_RE.fullmatch(agent):
         raise ValueError("invalid OpenClaw agent id")
@@ -116,8 +122,9 @@ def run_once(prompt, *, agent, replay=False, expected_reply=None, real_openclaw=
     root_path = None
 
     try:
-        root = Path(tempfile.mkdtemp(
-            prefix="grokbot2claw-replay-" if replay else "grokbot2claw-live-"))
+        root = Path(
+            tempfile.mkdtemp(prefix="grokbot2claw-replay-" if replay else "grokbot2claw-live-")
+        )
         root_path = root
         db_path = root / "messages.db"
         if root_path:
@@ -135,13 +142,25 @@ def run_once(prompt, *, agent, replay=False, expected_reply=None, real_openclaw=
                 # Gateway serializer principal-CeDW0csN.js:1690-1698 and
                 # observed RETRY-2.md. Only the shape is replayed, not raw logs.
                 fixture = root / "synthetic-cli"
-                envelope = {"runId": "synthetic-" + nonce, "status": "ok",
-                            "summary": "completed", "result": {
-                                "payloads": [{"text": expected, "mediaUrl": None}],
-                                "meta": {"durationMs": 1, "agentMeta": {
-                                    "sessionId": "synthetic-session",
-                                    "model": "synthetic", "provider": "fixture"}}}}
-                write_executable(fixture, """#!/usr/bin/env python3
+                envelope = {
+                    "runId": "synthetic-" + nonce,
+                    "status": "ok",
+                    "summary": "completed",
+                    "result": {
+                        "payloads": [{"text": expected, "mediaUrl": None}],
+                        "meta": {
+                            "durationMs": 1,
+                            "agentMeta": {
+                                "sessionId": "synthetic-session",
+                                "model": "synthetic",
+                                "provider": "fixture",
+                            },
+                        },
+                    },
+                }
+                write_executable(
+                    fixture,
+                    """#!/usr/bin/env python3
 import json, os, stat, sys
 from pathlib import Path
 args = sys.argv[1:]
@@ -154,8 +173,14 @@ assert info.st_uid == os.getuid()
 assert sys.stdin.read() == ""
 prompt = Path(path).read_text(encoding="utf-8")
 assert "untrusted external message" in prompt
-""".replace("AGENT", repr(agent)) + "assert " + repr(expected) + " in prompt\n" +
-                    "print(" + repr(json.dumps(envelope)) + ")\n")
+""".replace("AGENT", repr(agent))
+                    + "assert "
+                    + repr(expected)
+                    + " in prompt\n"
+                    + "print("
+                    + repr(json.dumps(envelope))
+                    + ")\n",
+                )
                 real_openclaw = str(fixture)
 
             with sqlite3.connect(db_path) as db:
@@ -163,13 +188,18 @@ assert "untrusted external message" in prompt
 
             token = secrets.token_urlsafe(48)
             digest = hashlib.sha256(token.encode("ascii")).hexdigest()
-            auth_path.write_text(json.dumps({"principals": {
-                principal: {"token_sha256": digest, "recipients": [agent]}
-            }}), encoding="utf-8")
+            auth_path.write_text(
+                json.dumps(
+                    {"principals": {principal: {"token_sha256": digest, "recipients": [agent]}}}
+                ),
+                encoding="utf-8",
+            )
             auth_path.chmod(0o600)
 
             (adapters / (agent + ".sh")).symlink_to(ROOT / "adapters" / "openclaw.sh")
-            write_executable(scripts / "send.sh", """#!/bin/sh
+            write_executable(
+                scripts / "send.sh",
+                """#!/bin/sh
 set -eu
 team=$1 from=$2 to=$3
 shift 3
@@ -180,11 +210,11 @@ import sqlite3, sys
 with sqlite3.connect(sys.argv[1]) as db:
     db.execute('INSERT INTO messages(team,from_agent,to_agent,body) VALUES(?,?,?,?)', sys.argv[2:6])
 PY
-""")
-            # macOS has no coreutils timeout. The CLI and harness retain separate
-            # bounded deadlines; this compatibility shim only preserves argv.
-            write_executable(bin_dir / "timeout", "#!/bin/sh\nshift\nexec \"$@\"\n")
-            write_executable(bin_dir / "openclaw", """#!/usr/bin/env python3
+""",
+            )
+            write_executable(
+                bin_dir / "openclaw",
+                """#!/usr/bin/env python3
 import json, os, re, stat, subprocess, sys
 
 def response_error(value):
@@ -261,11 +291,18 @@ try:
 except Exception:
     pass
 raise SystemExit(completed.returncode)
-""")
+""",
+            )
 
             server = http_server.create_server(
-                "127.0.0.1", 0, str(db_path), "localtest", str(auth_path),
-                read_timeout=2.0, db_timeout=2.0, max_connections=4,
+                "127.0.0.1",
+                0,
+                str(db_path),
+                "localtest",
+                str(auth_path),
+                read_timeout=2.0,
+                db_timeout=2.0,
+                max_connections=4,
             )
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -273,37 +310,48 @@ raise SystemExit(completed.returncode)
 
             env = os.environ.copy()
             env.pop("AGMSG_BRIDGE_ENV", None)
-            env.update({
-                "AGMSG_DB": str(db_path),
-                "AGMSG_SCRIPTS": str(scripts),
-                "AGMSG_BRIDGE_TEAM": "localtest",
-                "AGMSG_BRIDGE_AGENTS": agent,
-                "AGMSG_BRIDGE_ADAPTERS": str(adapters),
-                "AGMSG_BRIDGE_STATE": str(state),
-                "AGMSG_BRIDGE_POLL": "1",
-                "AGMSG_BRIDGE_MAX_DISPATCH": "1",
-                "AGMSG_BRIDGE_MAX_BOT_HOPS": "0",
-                "AGMSG_BRIDGE_ADAPTER_TIMEOUT": "270",
-                "OPENCLAW_BIN": str(bin_dir / "openclaw"),
-                "OPENCLAW_AGENT": agent,
-                "OPENCLAW_SESSION_KEY": "grokbot2claw",
-                "OPENCLAW_TIMEOUT": "5" if replay else "240",
-                "TMPDIR": str(root),
-                "AGMSG_REAL_OPENCLAW": real_openclaw,
-                "AGMSG_LIVE_RUN_MARKER": str(marker_path),
-                "AGMSG_LIVE_PROOF": str(proof_path),
-                "PATH": str(bin_dir) + os.pathsep + env.get("PATH", ""),
-            })
+            env.update(
+                {
+                    "AGMSG_DB": str(db_path),
+                    "AGMSG_SCRIPTS": str(scripts),
+                    "AGMSG_BRIDGE_TEAM": "localtest",
+                    "AGMSG_BRIDGE_AGENTS": agent,
+                    "AGMSG_BRIDGE_ADAPTERS": str(adapters),
+                    "AGMSG_BRIDGE_STATE": str(state),
+                    "AGMSG_BRIDGE_POLL": "1",
+                    "AGMSG_BRIDGE_MAX_DISPATCH": "1",
+                    "AGMSG_BRIDGE_MAX_BOT_HOPS": "0",
+                    "AGMSG_BRIDGE_ADAPTER_TIMEOUT": "270",
+                    "OPENCLAW_BIN": str(bin_dir / "openclaw"),
+                    "OPENCLAW_AGENT": agent,
+                    "OPENCLAW_SESSION_KEY": "grokbot2claw",
+                    "OPENCLAW_TIMEOUT": "5" if replay else "240",
+                    "TMPDIR": str(root),
+                    "AGMSG_REAL_OPENCLAW": real_openclaw,
+                    "AGMSG_LIVE_RUN_MARKER": str(marker_path),
+                    "AGMSG_LIVE_PROOF": str(proof_path),
+                    "PATH": str(bin_dir) + os.pathsep + env.get("PATH", ""),
+                }
+            )
             bridge = subprocess.Popen(
-                ["bash", str(ROOT / "bridge.sh")], env=env,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                ["bash", str(ROOT / "bridge.sh")],
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
 
-            post_status, sent = request(port, token, "POST", "/messages", {
-                "recipient": agent, "body": prompt,
-                "idempotency_key": "live-" + nonce,
-            })
+            post_status, sent = request(
+                port,
+                token,
+                "POST",
+                "/messages",
+                {
+                    "recipient": agent,
+                    "body": prompt,
+                    "idempotency_key": "live-" + nonce,
+                },
+            )
             result["http_post_status"] = post_status
             result["request_id"] = sent.get("id")
             if post_status != 202 or not result["request_id"]:
@@ -338,7 +386,8 @@ raise SystemExit(completed.returncode)
                 result["cli_proof"] = json.loads(proof_path.read_text(encoding="utf-8"))
             result["real_cli_invocations"] = 0 if replay else result["cli_invocations"]
             result["cleanup"]["prompt_and_output_files_removed"] = not any(
-                root.glob("grokbot2claw-openclaw*"))
+                root.glob("grokbot2claw-openclaw*")
+            )
             result["model_run_proven"] = bool(
                 not replay
                 and isinstance(result["cli_proof"], dict)
@@ -374,7 +423,9 @@ raise SystemExit(completed.returncode)
                 result["cleanup"]["port_closed"] = True
         if root_path is not None:
             shutil.rmtree(root_path, ignore_errors=True)
-        result["cleanup"]["temporary_directory_removed"] = bool(root_path and not root_path.exists())
+        result["cleanup"]["temporary_directory_removed"] = bool(
+            root_path and not root_path.exists()
+        )
         result["duration_seconds"] = round(time.monotonic() - started, 3)
 
     return result
@@ -383,8 +434,14 @@ raise SystemExit(completed.returncode)
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--live", action="store_true", help="authorize exactly one real OpenClaw model invocation")
-    mode.add_argument("--replay", action="store_true", help="synthetic Gateway-shape replay; never invoke installed OpenClaw")
+    mode.add_argument(
+        "--live", action="store_true", help="authorize exactly one real OpenClaw model invocation"
+    )
+    mode.add_argument(
+        "--replay",
+        action="store_true",
+        help="synthetic Gateway-shape replay; never invoke installed OpenClaw",
+    )
     parser.add_argument("--agent", required=True, help="operator-selected OpenClaw agent id")
     args = parser.parse_args()
     if not args.live and not args.replay:
@@ -397,8 +454,12 @@ def main():
         + ". Do not call tools, read files, change state, send messages, or start further tasks."
     )
     result = run_once(
-        prompt, agent=args.agent, replay=args.replay,
-        expected_reply=expected, principal="local-smoke")
+        prompt,
+        agent=args.agent,
+        replay=args.replay,
+        expected_reply=expected,
+        principal="local-smoke",
+    )
     # Keep the historical smoke proof nonce stable at the outer command boundary.
     result["nonce"] = nonce
     print(json.dumps(result, indent=2, sort_keys=True))

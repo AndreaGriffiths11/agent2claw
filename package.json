@@ -1,0 +1,12 @@
+{
+  "name": "grokbot2claw",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "format": "biome format --write .",
+    "lint": "biome ci ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14"
+  }
+}

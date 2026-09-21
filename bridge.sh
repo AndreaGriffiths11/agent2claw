@@ -13,6 +13,7 @@
 set -uo pipefail
 
 # Optional: load a secrets/env file your adapters need (API keys, tokens, paths).
+# shellcheck disable=SC1090 # The operator supplies this optional runtime path.
 [ -n "${AGMSG_BRIDGE_ENV:-}" ] && [ -r "${AGMSG_BRIDGE_ENV}" ] && . "${AGMSG_BRIDGE_ENV}"
 
 # ---- config (override via env / AGMSG_BRIDGE_ENV) -------------------------
@@ -61,7 +62,58 @@ is_served(){ case " $SERVED " in *" $1 "*) return 0;; *) return 1;; esac; }
 invoke_agent(){
   local agent="$1" prompt="$2" adapter="$ADAPTERS/$1.sh"
   [ -x "$adapter" ] || { log "no executable adapter for '$agent' at $adapter" >&2; return 0; }
-  timeout "$ADAPTER_TIMEOUT" "$adapter" "$prompt"
+  python3 - "$ADAPTER_TIMEOUT" "$adapter" "$prompt" <<'PY'
+import math
+import os
+import signal
+import subprocess
+import sys
+
+try:
+    timeout = float(sys.argv[1])
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError
+except ValueError:
+    print("bridge: invalid adapter timeout", file=sys.stderr)
+    raise SystemExit(2)
+
+try:
+    process = subprocess.Popen(sys.argv[2:], start_new_session=True)
+except OSError:
+    print("bridge: cannot launch adapter", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def stop_process_group(signum):
+    try:
+        os.killpg(process.pid, signum)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=2)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait()
+
+
+def relay_signal(signum, _frame):
+    stop_process_group(signum)
+    raise SystemExit(128 + signum)
+
+
+for handled_signal in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+    signal.signal(handled_signal, relay_signal)
+
+try:
+    raise SystemExit(process.wait(timeout=timeout))
+except subprocess.TimeoutExpired:
+    stop_process_group(signal.SIGTERM)
+    print("bridge: adapter timed out", file=sys.stderr)
+    raise SystemExit(124)
+PY
 }
 
 # Dispatch one message in the background so a slow agent never blocks delivery
@@ -122,7 +174,7 @@ while true; do
        RETURNING id,from_agent,body;" 2>/dev/null)
     [ -z "$row" ] && continue
 
-    id="${row%%$US*}"; rest="${row#*$US}"; from="${rest%%$US*}"; body="${rest#*$US}"
+    id="${row%%"$US"*}"; rest="${row#*"$US"}"; from="${rest%%"$US"*}"; body="${rest#*"$US"}"
 
     tracked=$(sqlite3 "$DB" "SELECT EXISTS(SELECT 1 FROM http_requests WHERE message_id=$id);" 2>/dev/null || echo 0)
 

@@ -23,11 +23,18 @@ MAX_MESSAGE_BYTES = 8 * 1024
 MAX_REPLY_BYTES = 8 * 1024
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
-ID_RE = re.compile(r"^/messages/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$")
+ID_RE = re.compile(
+    r"^/messages/([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
+)
 REQUIRED_MESSAGE_COLUMNS = {"id", "team", "from_agent", "to_agent", "body", "created_at", "read_at"}
 STATUS_ERRORS = {
-    "adapter_failed", "bot_hop_limited", "no_reply", "rate_limited",
-    "reply_delivery_failed", "reply_too_large", "invalid_reply",
+    "adapter_failed",
+    "bot_hop_limited",
+    "no_reply",
+    "rate_limited",
+    "reply_delivery_failed",
+    "reply_too_large",
+    "invalid_reply",
 }
 
 
@@ -39,7 +46,7 @@ def connect(db_path, timeout):
     db = sqlite3.connect(db_path, timeout=timeout)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys=ON")
-    db.execute("PRAGMA busy_timeout=%d" % int(timeout * 1000))
+    db.execute(f"PRAGMA busy_timeout={int(timeout * 1000)}")
     return db
 
 
@@ -73,7 +80,7 @@ def load_auth(path):
     info = os.stat(path, follow_symlinks=False)
     if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise ValueError("auth file must be an owner-owned regular file with mode 0600")
-    with open(path, "r", encoding="utf-8") as handle:
+    with open(path, encoding="utf-8") as handle:
         raw = json.load(handle)
     principals = raw.get("principals") if isinstance(raw, dict) else None
     if not isinstance(principals, dict) or not principals:
@@ -85,11 +92,22 @@ def load_auth(path):
             raise ValueError("invalid principal")
         digest = item.get("token_sha256")
         recipients = item.get("recipients")
-        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest) or digest in hashes:
+        if (
+            not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or digest in hashes
+        ):
             raise ValueError("token_sha256 values must be unique lowercase SHA-256 digests")
-        if not isinstance(recipients, list) or not recipients or len(set(recipients)) != len(recipients):
+        if (
+            not isinstance(recipients, list)
+            or not recipients
+            or len(set(recipients)) != len(recipients)
+        ):
             raise ValueError("each principal needs unique recipients")
-        if any(not isinstance(value, str) or not NAME_RE.fullmatch(value) or value == name for value in recipients):
+        if any(
+            not isinstance(value, str) or not NAME_RE.fullmatch(value) or value == name
+            for value in recipients
+        ):
             raise ValueError("invalid recipient")
         hashes.add(digest)
         result[name] = {"digest": digest, "recipients": frozenset(recipients)}
@@ -189,7 +207,7 @@ def update_status(db_path, message_id, status_value, error_code=None):
     with connect(db_path, 2.0) as db:
         db.execute(
             "UPDATE http_requests SET status=?,reply=?,error_code=?,updated_at=? "
-            "WHERE message_id=? AND status IN (%s)" % placeholders,
+            f"WHERE message_id=? AND status IN ({placeholders})",
             (status_value, reply, error_code, utc_now(), message_id) + allowed_from,
         )
 
@@ -206,7 +224,9 @@ class BoundedHTTPServer(ThreadingMixIn, HTTPServer):
     def process_request(self, request, client_address):
         if not self._slots.acquire(blocking=False):
             try:
-                request.sendall(b"HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
+                request.sendall(
+                    b"HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                )
             finally:
                 self.shutdown_request(request)
             return
@@ -294,16 +314,33 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": "invalid_request"})
             return
         recipient, body, key = value["recipient"], value["body"], value["idempotency_key"]
-        if not isinstance(recipient, str) or recipient not in self.server.principals[principal]["recipients"]:
+        if (
+            not isinstance(recipient, str)
+            or recipient not in self.server.principals[principal]["recipients"]
+        ):
             self._json(403, {"error": "recipient_forbidden"})
             return
-        if not isinstance(body, str) or not body or len(body.encode("utf-8")) > MAX_MESSAGE_BYTES or "\x00" in body or "\x1f" in body:
+        if (
+            not isinstance(body, str)
+            or not body
+            or len(body.encode("utf-8")) > MAX_MESSAGE_BYTES
+            or "\x00" in body
+            or "\x1f" in body
+        ):
             self._json(400, {"error": "invalid_body"})
             return
         if not isinstance(key, str) or not KEY_RE.fullmatch(key):
             self._json(400, {"error": "invalid_idempotency_key"})
             return
-        code, response = submit(self.server.db_path, self.server.db_timeout, self.server.team, principal, recipient, body, key)
+        code, response = submit(
+            self.server.db_path,
+            self.server.db_timeout,
+            self.server.team,
+            principal,
+            recipient,
+            body,
+            key,
+        )
         self._json(code, response)
 
     def do_GET(self):
@@ -314,7 +351,9 @@ class Handler(BaseHTTPRequestHandler):
         principal = self._principal()
         if principal is None:
             return
-        code, response = get_request(self.server.db_path, self.server.db_timeout, match.group(1), principal)
+        code, response = get_request(
+            self.server.db_path, self.server.db_timeout, match.group(1), principal
+        )
         self._json(code, response)
 
     def _method_not_allowed(self):
@@ -326,7 +365,9 @@ class Handler(BaseHTTPRequestHandler):
     do_PUT = do_PATCH = do_DELETE = do_OPTIONS = _method_not_allowed
 
 
-def create_server(host, port, db_path, team, auth_file, read_timeout=5.0, db_timeout=2.0, max_connections=8):
+def create_server(
+    host, port, db_path, team, auth_file, read_timeout=5.0, db_timeout=2.0, max_connections=8
+):
     if host != "127.0.0.1":
         raise ValueError("only the loopback address 127.0.0.1 is permitted")
     if not NAME_RE.fullmatch(team):
@@ -366,14 +407,29 @@ def main():
             parser.error("--status/--error require --update-status")
         if not args.team or not args.auth_file:
             parser.error("server mode requires --team and --auth-file")
-        if not (0 <= args.port <= 65535) or args.read_timeout <= 0 or args.db_timeout <= 0 or not (1 <= args.max_connections <= 64):
+        if (
+            not (0 <= args.port <= 65535)
+            or args.read_timeout <= 0
+            or args.db_timeout <= 0
+            or not (1 <= args.max_connections <= 64)
+        ):
             parser.error("invalid server limit")
-        server = create_server(args.host, args.port, args.db, args.team, args.auth_file, args.read_timeout, args.db_timeout, args.max_connections)
-        print("agmsg HTTP listening on http://%s:%d" % server.server_address, flush=True)
+        server = create_server(
+            args.host,
+            args.port,
+            args.db,
+            args.team,
+            args.auth_file,
+            args.read_timeout,
+            args.db_timeout,
+            args.max_connections,
+        )
+        server_host, server_port = server.server_address
+        print(f"agmsg HTTP listening on http://{server_host}:{server_port}", flush=True)
         server.serve_forever()
     except (OSError, ValueError, sqlite3.Error) as error:
-        print("agmsg HTTP startup failed: %s" % error, file=sys.stderr)
-        raise SystemExit(1)
+        print(f"agmsg HTTP startup failed: {error}", file=sys.stderr)
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":
