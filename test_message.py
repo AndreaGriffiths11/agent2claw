@@ -4,6 +4,7 @@ import io
 import json
 import os
 import signal
+import stat
 import subprocess
 import tempfile
 import textwrap
@@ -90,8 +91,104 @@ class MessageCommandTest(unittest.TestCase):
             json.loads(stdout), {"status": "completed", "request_id": "fixture-id", "reply": reply}
         )
         runner.assert_called_once_with(
-            "line one\n'quotes' $(literal) 世界", agent="docs-agent", principal="grokbot-macshell"
+            "line one\n'quotes' $(literal) 世界",
+            agent="docs-agent",
+            principal="grokbot-macshell",
+            session_key="grokbot2claw",
         )
+
+    def _make_send_result(self):
+        return {
+            "passed": True,
+            "request_id": "fixture-id",
+            "actual_reply": "ok",
+            "cleanup": {"port_closed": True},
+        }
+
+    def test_session_key_flag_reaches_runner(self):
+        message_path = self.root / "message.txt"
+        message_path.write_text("hello", encoding="utf-8")
+        runner = mock.Mock(return_value=self._make_send_result())
+        status, _, stderr = self.call_main(
+            [
+                "--send",
+                "--agent",
+                "docs-agent",
+                "--session-key",
+                "custom1",
+                "--message-file",
+                str(message_path),
+            ],
+            runner,
+        )
+        self.assertEqual((status, stderr), (0, ""))
+        runner.assert_called_once_with(
+            "hello", agent="docs-agent", principal="grokbot-macshell", session_key="custom1"
+        )
+
+    def test_session_key_env_var_reaches_runner(self):
+        message_path = self.root / "message.txt"
+        message_path.write_text("hello", encoding="utf-8")
+        runner = mock.Mock(return_value=self._make_send_result())
+        with mock.patch.dict(os.environ, {"GROKBOT2CLAW_SESSION_KEY": "fromenv"}, clear=False):
+            status, _, stderr = self.call_main(
+                ["--send", "--agent", "docs-agent", "--message-file", str(message_path)],
+                runner,
+            )
+        self.assertEqual((status, stderr), (0, ""))
+        runner.assert_called_once_with(
+            "hello", agent="docs-agent", principal="grokbot-macshell", session_key="fromenv"
+        )
+
+    def test_session_key_flag_beats_env_var(self):
+        message_path = self.root / "message.txt"
+        message_path.write_text("hello", encoding="utf-8")
+        runner = mock.Mock(return_value=self._make_send_result())
+        with mock.patch.dict(os.environ, {"GROKBOT2CLAW_SESSION_KEY": "fromenv"}, clear=False):
+            status, _, stderr = self.call_main(
+                [
+                    "--send",
+                    "--agent",
+                    "docs-agent",
+                    "--session-key",
+                    "fromflag",
+                    "--message-file",
+                    str(message_path),
+                ],
+                runner,
+            )
+        self.assertEqual((status, stderr), (0, ""))
+        runner.assert_called_once_with(
+            "hello", agent="docs-agent", principal="grokbot-macshell", session_key="fromflag"
+        )
+
+    def test_invalid_session_key_is_rejected(self):
+        message_path = self.root / "message.txt"
+        message_path.write_text("hello", encoding="utf-8")
+        result = subprocess.run(
+            [
+                "python3",
+                str(Path(message.__file__)),
+                "--send",
+                "--agent",
+                "docs-agent",
+                "--session-key",
+                "bad key!",
+                "--message-file",
+                str(message_path),
+            ],
+            text=True,
+            capture_output=True,
+            timeout=3,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("--session-key", result.stderr)
+
+    def test_run_once_rejects_invalid_session_key(self):
+        with self.assertRaises(ValueError) as failure:
+            run_once("hello", agent="docs-agent", replay=True, session_key="bad key!")
+        self.assertIn("session_key", str(failure.exception))
 
     def test_output_directory_saves_exact_json_and_prints_compact_receipt(self):
         reply = 'line one\n`code` "quotes" — 世界\n\n'
@@ -210,9 +307,66 @@ class MessageCommandTest(unittest.TestCase):
 
         self.assertEqual(status, 2)
         self.assertEqual(stdout, "")
-        self.assertEqual(stderr, "message command: cannot prepare output directory\n")
+        self.assertEqual(
+            stderr,
+            "message command: --output-dir refers to a path where "
+            f"{str(invalid)!r} exists and is not a directory\n",
+        )
         self.assertEqual(invalid.read_text(), "existing user file")
         runner.assert_not_called()
+
+    def test_nested_output_directory_components_are_all_owner_only_under_permissive_umask(self):
+        previous_umask = os.umask(0o022)
+        self.addCleanup(os.umask, previous_umask)
+        output_root = self.root / "new1" / "new2" / "new3"
+
+        run_directory = message.prepare_output_directory(output_root)
+
+        self.assertTrue(run_directory.is_relative_to(output_root.resolve()))
+        for candidate in (self.root / "new1", self.root / "new1" / "new2", output_root):
+            self.assertEqual(stat.S_IMODE(os.stat(candidate).st_mode), 0o700)
+
+    def test_preexisting_intermediate_directory_mode_is_left_unchanged(self):
+        previous_umask = os.umask(0o022)
+        self.addCleanup(os.umask, previous_umask)
+        preexisting = self.root / "shared"
+        preexisting.mkdir(mode=0o755)
+        os.chmod(preexisting, 0o755)
+        output_root = preexisting / "private-child"
+
+        message.prepare_output_directory(output_root)
+
+        self.assertEqual(stat.S_IMODE(os.stat(preexisting).st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(os.stat(output_root).st_mode), 0o700)
+
+    def test_preexisting_final_directory_owned_by_another_user_is_rejected(self):
+        output_root = self.root / "results"
+        output_root.mkdir(mode=0o700)
+        with mock.patch.object(message.os, "getuid", return_value=os.getuid() + 1), \
+                self.assertRaises(ValueError) as failure:
+            message.prepare_output_directory(output_root)
+        self.assertIn("not owned by the current user", str(failure.exception))
+
+    def test_preexisting_final_directory_that_is_group_or_world_writable_is_rejected(self):
+        output_root = self.root / "results"
+        output_root.mkdir(mode=0o755)
+        os.chmod(output_root, 0o755)
+
+        with self.assertRaises(ValueError) as failure:
+            message.prepare_output_directory(output_root)
+
+        self.assertIn("group- or world-accessible", str(failure.exception))
+
+    def test_symlinked_final_output_directory_is_rejected(self):
+        real_target = self.root / "real-target"
+        real_target.mkdir(mode=0o700)
+        link = self.root / "link-to-target"
+        link.symlink_to(real_target, target_is_directory=True)
+
+        with self.assertRaises(ValueError) as failure:
+            message.prepare_output_directory(link)
+
+        self.assertIn("must not be a symlink", str(failure.exception))
 
     def test_output_directory_is_removed_when_bridge_fails(self):
         message_path = self.root / "message.txt"
@@ -357,6 +511,34 @@ class MessageCommandTest(unittest.TestCase):
         self.assertEqual(counter.read_text(), "1")
         self.assertEqual(result["cli_invocations"], 1)
         self.assertTrue(all(result["cleanup"].values()))
+
+    def test_auth_and_mailbox_files_are_created_owner_only(self):
+        # Reproduce the run under a permissive umask so a regression that lets
+        # auth.json or messages.db inherit the umask (instead of forcing 0o600
+        # at creation time) would be caught here.
+        captured_modes = {}
+        real_rmtree = runtime.shutil.rmtree
+
+        def snapshot_then_rmtree(path, *args, **kwargs):
+            root = Path(path)
+            captured_modes["auth"] = stat.S_IMODE(os.stat(root / "auth.json").st_mode)
+            captured_modes["db"] = stat.S_IMODE(os.stat(root / "messages.db").st_mode)
+            return real_rmtree(path, *args, **kwargs)
+
+        old_umask = os.umask(0o022)
+        try:
+            with mock.patch.object(runtime.shutil, "rmtree", side_effect=snapshot_then_rmtree):
+                result = run_once(
+                    "owner-only permission fixture reply",
+                    agent="perm-agent",
+                    replay=True,
+                    expected_reply="owner-only permission fixture reply",
+                )
+        finally:
+            os.umask(old_umask)
+        self.assertTrue(result["passed"], result)
+        self.assertEqual(captured_modes["auth"], 0o600)
+        self.assertEqual(captured_modes["db"], 0o600)
 
     def test_interruption_during_setup_cleans_ephemeral_resources(self):
         scratch = self.root / "scratch"
@@ -512,6 +694,57 @@ class MessageCommandTest(unittest.TestCase):
             metadata = lock.read_text()
             self.assertNotIn("PROMPT_PRIVATE_LOCK", metadata)
             self.assertIn('"session_key":"grokbot2claw"', metadata)
+
+
+class DoctorCommandTest(unittest.TestCase):
+    def call_main(self, argv):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            status = message.main(argv, runner=mock.Mock())
+        return status, stdout.getvalue(), stderr.getvalue()
+
+    def test_doctor_all_green_exits_zero(self):
+        with mock.patch.object(message.shutil, "which", return_value="/usr/bin/openclaw"):
+            status, stdout, stderr = self.call_main(["--doctor"])
+        self.assertEqual(status, 0, stderr)
+        self.assertNotIn("FAIL", stdout)
+        self.assertIn("all checks passed", stdout)
+        for label, _ in message.DOCTOR_CHECKS:
+            self.assertIn(f"[ok] {label}:", stdout)
+
+    def test_doctor_reports_missing_openclaw_and_fails(self):
+        def fake_which(name):
+            return None if name == "openclaw" else "/usr/bin/" + name
+
+        with mock.patch.object(message.shutil, "which", side_effect=fake_which):
+            status, stdout, stderr = self.call_main(["--doctor"])
+        self.assertNotEqual(status, 0)
+        self.assertIn("[FAIL] openclaw on PATH:", stdout)
+        self.assertIn("install OpenClaw", stdout)
+        self.assertIn("one or more checks failed", stderr)
+
+    def test_doctor_prints_one_line_per_check(self):
+        with mock.patch.object(message.shutil, "which", return_value="/usr/bin/openclaw"):
+            _, stdout, _ = self.call_main(["--doctor"])
+        lines = [line for line in stdout.splitlines() if line.startswith("[")]
+        self.assertEqual(len(lines), len(message.DOCTOR_CHECKS))
+
+    def test_doctor_does_not_require_send_or_agent(self):
+        with mock.patch.object(message.shutil, "which", return_value="/usr/bin/openclaw"):
+            status, _, stderr = self.call_main(["--doctor"])
+        self.assertEqual(status, 0, stderr)
+
+
+class InterruptHandlingTest(unittest.TestCase):
+    def test_ctrl_c_during_run_exits_130_not_nameerror(self):
+        # Regression: main()'s SIGINT handler used sys.stderr without a
+        # module-level `import sys`, so Ctrl-C raised NameError instead of
+        # exiting with status 130.
+        with self.assertRaises(SystemExit) as ctx, mock.patch.object(
+            runtime, "run_once", side_effect=runtime.SignalInterruption(signal.SIGINT)
+        ), mock.patch("sys.argv", ["runtime.py", "--replay", "--agent", "test-agent"]):
+            runtime.main()
+        self.assertEqual(ctx.exception.code, 128 + signal.SIGINT)
 
 
 if __name__ == "__main__":

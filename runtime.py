@@ -15,6 +15,7 @@ import signal
 import sqlite3
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -203,10 +204,15 @@ def run_once(
     expected_reply=None,
     real_openclaw=None,
     principal="grokbot-macshell",
+    session_key=None,
 ):
     """Run one message through ephemeral HTTP, mailbox, bridge, and adapter resources."""
     if not isinstance(agent, str) or not AGENT_RE.fullmatch(agent):
         raise ValueError("invalid OpenClaw agent id")
+    if session_key is not None and (
+        not isinstance(session_key, str) or not AGENT_RE.fullmatch(session_key)
+    ):
+        raise ValueError("session_key must contain only letters, digits, underscores, or hyphens")
     if not replay and real_openclaw is None:
         real_openclaw = shutil.which("openclaw")
     if not replay and not real_openclaw:
@@ -242,7 +248,7 @@ def run_once(
             tempfile.mkdtemp(prefix="grokbot2claw-replay-" if replay else "grokbot2claw-live-")
         )
         root_path = root
-        session_key = REPLAY_SESSION_KEY if replay else SESSION_KEY
+        session_key = REPLAY_SESSION_KEY if replay else (session_key or SESSION_KEY)
         lock_descriptor = acquire_session_lock(
             agent, session_key, replay_root=root if replay else None
         )
@@ -302,18 +308,18 @@ assert "untrusted external message" in prompt
                 )
                 real_openclaw = str(fixture)
 
+            http_server.ensure_secure_db_file(db_path)
             with sqlite3.connect(db_path) as db:
                 db.executescript(SCHEMA)
 
             token = secrets.token_urlsafe(48)
             digest = hashlib.sha256(token.encode("ascii")).hexdigest()
-            auth_path.write_text(
-                json.dumps(
-                    {"principals": {principal: {"token_sha256": digest, "recipients": [agent]}}}
-                ),
-                encoding="utf-8",
-            )
-            auth_path.chmod(0o600)
+            auth_payload = json.dumps(
+                {"principals": {principal: {"token_sha256": digest, "recipients": [agent]}}}
+            ).encode("utf-8")
+            auth_fd = os.open(auth_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(auth_fd, "wb") as handle:
+                handle.write(auth_payload)
 
             (adapters / (agent + ".sh")).symlink_to(ROOT / "adapters" / "openclaw.sh")
             write_executable(
@@ -465,6 +471,7 @@ raise SystemExit(completed.returncode)
             else:
                 raise TimeoutError("request did not reach a terminal state before its deadline")
 
+            http_server.ensure_secure_db_file(db_path)
             with sqlite3.connect(db_path) as db:
                 replies = db.execute(
                     "SELECT body FROM messages WHERE team=? AND from_agent=? AND to_agent=?",
@@ -546,6 +553,8 @@ def main():
     )
     parser.add_argument("--agent", required=True, help="operator-selected OpenClaw agent id")
     args = parser.parse_args()
+    if not AGENT_RE.fullmatch(args.agent):
+        parser.error("--agent must contain only letters, digits, underscores, or hyphens")
     if not args.live and not args.replay:
         parser.error("refusing to call a real model without --live")
     nonce = secrets.token_hex(12)

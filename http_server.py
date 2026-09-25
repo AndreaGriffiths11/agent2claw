@@ -42,7 +42,23 @@ def utc_now():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def ensure_secure_db_file(db_path):
+    """Pre-create db_path with owner-only 0600 permissions if it doesn't exist yet.
+
+    sqlite3.connect() creates the database file using the process umask, which can
+    leave it group/world readable. Pre-creating the file with explicit 0600 mode
+    closes that window; existing files are left untouched.
+    """
+    path = os.fspath(db_path)
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        return
+    os.close(fd)
+
+
 def connect(db_path, timeout):
+    ensure_secure_db_file(db_path)
     db = sqlite3.connect(db_path, timeout=timeout)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys=ON")
@@ -200,6 +216,12 @@ def update_status(db_path, message_id, status_value, error_code=None):
                 reply = data.decode("utf-8")
             except UnicodeDecodeError:
                 status_value, error_code = "failed", "invalid_reply"
+            else:
+                # Same control-character rule as message.py's read_message: the
+                # bridge validates replies before calling --update-status, but
+                # this keeps the check in place in-process, defense-in-depth.
+                if not reply or "\x00" in reply or "\x1f" in reply:
+                    raise ValueError("reply is empty or contains unsupported control characters")
     if status_value == "failed" and error_code not in STATUS_ERRORS:
         raise ValueError("invalid error code")
     allowed_from = ("pending",) if status_value == "processing" else ("pending", "processing")

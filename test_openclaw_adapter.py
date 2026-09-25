@@ -97,8 +97,13 @@ class OpenClawAdapterTest(unittest.TestCase):
             }
         )
         env.update(overrides)
+        # The adapter contract takes a private prompt *file* as $1, never the
+        # prompt text itself, so message text stays off command lines.
+        prompt_text = "literal $(touch nope); `false`; 'quotes'\n¡Hola, 世界!"
+        prompt_file = self.root / "prompt.txt"
+        prompt_file.write_text(prompt_text, encoding="utf-8")
         result = subprocess.run(
-            ["bash", str(adapter), "literal $(touch nope); `false`; 'quotes'\n¡Hola, 世界!"],
+            ["bash", str(adapter), str(prompt_file)],
             env=env,
             text=True,
             capture_output=True,
@@ -389,6 +394,23 @@ class OpenClawAdapterTest(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 2)
             self.assertEqual(result.stdout, "")
+
+    def test_invalid_agent_is_rejected_before_invocation(self):
+        result = subprocess.run(
+            [
+                "python3",
+                str(ADAPTER.parent.parent / "runtime.py"),
+                "--replay",
+                "--agent",
+                "bad agent!",
+            ],
+            text=True,
+            capture_output=True,
+            timeout=3,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("--agent", result.stderr)
 
     def test_http_replay_uses_actual_adapter_without_live_cli(self):
         # The replay has separate 10-second request and process-cleanup bounds;

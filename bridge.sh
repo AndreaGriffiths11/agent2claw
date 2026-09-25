@@ -87,13 +87,18 @@ record_bot_hop(){ date +%s >> "$STATE/bothops"; }
 is_served(){ case " $SERVED " in *" $1 "*) return 0;; *) return 1;; esac; }
 
 # ---- adapter invocation ---------------------------------------------------
-# An adapter is any executable at $ADAPTERS/<agent>.sh that takes the prompt as
-# $1 and prints the agent's reply to stdout (empty stdout = no reply). Adding a
+# An adapter is any executable at $ADAPTERS/<agent>.sh that takes the path of
+# a private (0600) prompt file as $1 and prints the agent's reply to stdout
+# (empty stdout = no reply). The prompt file keeps private message text off
+# command lines, where other local users could read it via ps(1). Adding a
 # new agent is just dropping in one adapter file. Examples live in adapters/.
 invoke_agent(){
-  local agent="$1" prompt="$2" adapter="$ADAPTERS/$1.sh"
+  local agent="$1" prompt="$2" adapter="$ADAPTERS/$1.sh" prompt_file
   [ -x "$adapter" ] || { log "no executable adapter for '$agent' at $adapter" >&2; return 0; }
-  python3 - "$ADAPTER_TIMEOUT" "$adapter" "$prompt" <<'PY'
+  prompt_file=$(mktemp "$STATE/prompt.$agent.XXXXXX") || { log "bridge: cannot create private prompt file for '$agent'" >&2; return 1; }
+  chmod 600 "$prompt_file" || { log "bridge: cannot secure private prompt file for '$agent'" >&2; rm -f "$prompt_file"; return 1; }
+  printf '%s' "$prompt" >"$prompt_file" || { log "bridge: cannot write private prompt file for '$agent'" >&2; rm -f "$prompt_file"; return 1; }
+  python3 - "$ADAPTER_TIMEOUT" "$adapter" "$prompt_file" <<'PY'
 import math
 import os
 import signal
@@ -108,8 +113,10 @@ except ValueError:
     print("bridge: invalid adapter timeout", file=sys.stderr)
     raise SystemExit(2)
 
+adapter, prompt_file = sys.argv[2], sys.argv[3]
+
 try:
-    process = subprocess.Popen(sys.argv[2:], start_new_session=True)
+    process = subprocess.Popen([adapter, prompt_file], start_new_session=True)
 except OSError:
     print("bridge: cannot launch adapter", file=sys.stderr)
     raise SystemExit(1)
@@ -144,7 +151,19 @@ except subprocess.TimeoutExpired:
     stop_process_group(signal.SIGTERM)
     print("bridge: adapter timed out", file=sys.stderr)
     raise SystemExit(124)
+finally:
+    # The prompt file holds private message text: remove it on every exit
+    # path so it never lingers past the adapter invocation.
+    try:
+        os.unlink(prompt_file)
+    except OSError:
+        pass
 PY
+  status=$?
+  # Belt and braces with the Python finally above: the file must not survive
+  # this function no matter how the interpreter below exits.
+  rm -f "$prompt_file"
+  return $status
 }
 
 # Dispatch one message in the background so a slow agent never blocks delivery

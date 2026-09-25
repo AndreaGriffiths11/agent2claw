@@ -249,6 +249,49 @@ class HTTPTest(unittest.TestCase):
         _, result = self.request("GET", "/messages/" + sent["id"])
         self.assertEqual((result["status"], result["reply"]), ("completed", "fixture"))
 
+    def test_update_status_rejects_control_character_reply(self):
+        _, sent = self.request("POST", "/messages", self.message())
+        with sqlite3.connect(self.db) as db:
+            message_id = db.execute(
+                "SELECT message_id FROM http_requests WHERE id=?", (sent["id"],)
+            ).fetchone()[0]
+        old_stdin = http_server.sys.stdin
+        try:
+
+            class Input:
+                buffer = __import__("io").BytesIO(b"unsafe\x1freply")
+
+            http_server.sys.stdin = Input()
+            with self.assertRaisesRegex(
+                ValueError, "reply is empty or contains unsupported control characters"
+            ):
+                http_server.update_status(str(self.db), message_id, "completed")
+        finally:
+            http_server.sys.stdin = old_stdin
+        _, result = self.request("GET", "/messages/" + sent["id"])
+        self.assertEqual((result["status"], result["reply"]), ("pending", None))
+
+    def test_update_status_accepts_normal_reply(self):
+        _, sent = self.request("POST", "/messages", self.message())
+        with sqlite3.connect(self.db) as db:
+            message_id = db.execute(
+                "SELECT message_id FROM http_requests WHERE id=?", (sent["id"],)
+            ).fetchone()[0]
+        old_stdin = http_server.sys.stdin
+        try:
+
+            class Input:
+                buffer = __import__("io").BytesIO(b"a perfectly normal reply")
+
+            http_server.sys.stdin = Input()
+            http_server.update_status(str(self.db), message_id, "completed")
+        finally:
+            http_server.sys.stdin = old_stdin
+        _, result = self.request("GET", "/messages/" + sent["id"])
+        self.assertEqual(
+            (result["status"], result["reply"]), ("completed", "a perfectly normal reply")
+        )
+
     def test_bridge_end_to_end_uses_body_as_data(self):
         adapters = self.root / "adapters"
         state = self.root / "state"
@@ -259,7 +302,9 @@ class HTTPTest(unittest.TestCase):
         marker = self.root / "must-not-exist"
         (adapters / "rusty.sh").write_text(
             """#!/bin/sh
-case "$1" in
+# Adapter contract: $1 is a private prompt *file*, never the prompt text.
+prompt=$(cat "$1" 2>/dev/null)
+case "$prompt" in
   *slow*)
     sleep 10 &
     child=$!
@@ -269,7 +314,7 @@ case "$1" in
   *invalid-utf8*) printf '\\377' ;;
   *invalid-control*) printf 'unsafe\\001reply' ;;
   *)
-    printf '%s' "$1" > "$CAPTURE"
+    printf '%s' "$prompt" > "$CAPTURE"
     printf 'synthetic fixture reply\n\n'
     ;;
 esac
@@ -351,6 +396,42 @@ esac
             [(item["status"], item["error"]) for item in invalid_results],
             [("failed", "invalid_reply"), ("failed", "invalid_reply")],
         )
+
+
+class EnsureSecureDbFileTest(unittest.TestCase):
+    def test_creates_new_file_with_owner_only_permissions(self):
+        old_umask = os.umask(0o022)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                db_path = Path(tmp) / "messages.db"
+                self.assertFalse(db_path.exists())
+                http_server.ensure_secure_db_file(db_path)
+                self.assertTrue(db_path.exists())
+                mode = os.stat(db_path).st_mode & 0o777
+                self.assertEqual(mode, 0o600)
+        finally:
+            os.umask(old_umask)
+
+    def test_connect_creates_db_with_owner_only_permissions(self):
+        old_umask = os.umask(0o022)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                db_path = Path(tmp) / "messages.db"
+                with http_server.connect(db_path, 1.0) as db:
+                    db.executescript(MESSAGE_SCHEMA)
+                mode = os.stat(db_path).st_mode & 0o777
+                self.assertEqual(mode, 0o600)
+        finally:
+            os.umask(old_umask)
+
+    def test_leaves_existing_file_permissions_untouched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "messages.db"
+            db_path.touch()
+            db_path.chmod(0o644)
+            http_server.ensure_secure_db_file(db_path)
+            mode = os.stat(db_path).st_mode & 0o777
+            self.assertEqual(mode, 0o644)
 
 
 if __name__ == "__main__":
