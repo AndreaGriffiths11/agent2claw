@@ -2,6 +2,7 @@
 """Authenticated, loopback-only HTTP ingress for an agmsg SQLite mailbox."""
 
 import argparse
+import contextlib
 import hashlib
 import hmac
 import json
@@ -61,13 +62,22 @@ def ensure_secure_db_file(db_path):
     os.close(fd)
 
 
+@contextlib.contextmanager
 def connect(db_path, timeout):
     ensure_secure_db_file(db_path)
     db = sqlite3.connect(db_path, timeout=timeout)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys=ON")
     db.execute(f"PRAGMA busy_timeout={int(timeout * 1000)}")
-    return db
+    try:
+        yield db
+    except Exception:
+        db.rollback()
+        raise
+    else:
+        db.commit()
+    finally:
+        db.close()
 
 
 def ensure_schema(db_path, timeout):

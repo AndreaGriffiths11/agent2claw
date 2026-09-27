@@ -4,7 +4,7 @@ This page records what has actually been run, where, and what each run does and 
 
 ## Project status
 
-GrokBot2Claw is an **unofficial developer preview** shared with a named audience. The GitHub repository may still require access until the owner publishes it. The code has not been packaged, deployed, or installed globally.
+GrokBot2Claw is an **unofficial developer preview**. The code has not been packaged, deployed, or installed globally.
 
 ## Verified
 

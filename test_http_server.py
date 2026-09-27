@@ -34,8 +34,12 @@ class HTTPTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.db = self.root / "messages.db"
-        with sqlite3.connect(self.db) as db:
-            db.executescript(MESSAGE_SCHEMA)
+        db = sqlite3.connect(self.db)
+        try:
+            with db:
+                db.executescript(MESSAGE_SCHEMA)
+        finally:
+            db.close()
         self.tokens = {"muse": secrets.token_urlsafe(32), "other": secrets.token_urlsafe(32)}
         self.auth = self.root / "auth.json"
         self.auth.write_text(
@@ -101,11 +105,15 @@ class HTTPTest(unittest.TestCase):
         self.assertEqual(result["sender"], "muse")
         self.assertEqual(result["recipient"], "rusty")
         self.assertIsNone(result["reply"])
-        with sqlite3.connect(self.db) as db:
-            self.assertEqual(
-                db.execute("SELECT from_agent,to_agent,body FROM messages").fetchone(),
-                ("muse", "rusty", "hello"),
-            )
+        db = sqlite3.connect(self.db)
+        try:
+            with db:
+                self.assertEqual(
+                    db.execute("SELECT from_agent,to_agent,body FROM messages").fetchone(),
+                    ("muse", "rusty", "hello"),
+                )
+        finally:
+            db.close()
 
     def test_authentication_and_identity_isolation(self):
         self.assertEqual(self.request("POST", "/messages", self.message(), token=None)[0], 401)
@@ -159,8 +167,12 @@ class HTTPTest(unittest.TestCase):
         self.assertEqual(len(ids), 1)
         self.assertIn(202, {result[0] for result in results})
         self.assertTrue({result[0] for result in results}.issubset({200, 202}))
-        with sqlite3.connect(self.db) as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM messages").fetchone()[0], 1)
+        db = sqlite3.connect(self.db)
+        try:
+            with db:
+                self.assertEqual(db.execute("SELECT count(*) FROM messages").fetchone()[0], 1)
+        finally:
+            db.close()
         self.assertEqual(
             self.request("POST", "/messages", self.message("same-key", "different"))[0], 409
         )
@@ -231,10 +243,14 @@ class HTTPTest(unittest.TestCase):
 
     def test_status_transitions_do_not_overwrite_completion(self):
         _, sent = self.request("POST", "/messages", self.message())
-        with sqlite3.connect(self.db) as db:
-            message_id = db.execute(
-                "SELECT message_id FROM http_requests WHERE id=?", (sent["id"],)
-            ).fetchone()[0]
+        db = sqlite3.connect(self.db)
+        try:
+            with db:
+                message_id = db.execute(
+                    "SELECT message_id FROM http_requests WHERE id=?", (sent["id"],)
+                ).fetchone()[0]
+        finally:
+            db.close()
         old_stdin = http_server.sys.stdin
         try:
 
@@ -251,10 +267,14 @@ class HTTPTest(unittest.TestCase):
 
     def test_update_status_rejects_control_character_reply(self):
         _, sent = self.request("POST", "/messages", self.message())
-        with sqlite3.connect(self.db) as db:
-            message_id = db.execute(
-                "SELECT message_id FROM http_requests WHERE id=?", (sent["id"],)
-            ).fetchone()[0]
+        db = sqlite3.connect(self.db)
+        try:
+            with db:
+                message_id = db.execute(
+                    "SELECT message_id FROM http_requests WHERE id=?", (sent["id"],)
+                ).fetchone()[0]
+        finally:
+            db.close()
         old_stdin = http_server.sys.stdin
         try:
             for bad in ("unsafe\x01reply", "unsafe\x7freply", "unsafe\x1freply"):
@@ -279,12 +299,16 @@ class HTTPTest(unittest.TestCase):
                     _, result = self.request("GET", "/messages/" + sent["id"])
                     self.assertEqual((result["status"], result["reply"]), ("completed", allowed))
                     # Reuse the same request row by resetting it to pending for the next subtest.
-                    with sqlite3.connect(self.db) as db:
-                        db.execute(
-                            "UPDATE http_requests SET status='pending', reply=NULL, "
-                            "error_code=NULL WHERE message_id=?",
-                            (message_id,),
-                        )
+                    reset_db = sqlite3.connect(self.db)
+                    try:
+                        with reset_db:
+                            reset_db.execute(
+                                "UPDATE http_requests SET status='pending', reply=NULL, "
+                                "error_code=NULL WHERE message_id=?",
+                                (message_id,),
+                            )
+                    finally:
+                        reset_db.close()
         finally:
             http_server.sys.stdin = old_stdin
         _, result = self.request("GET", "/messages/" + sent["id"])
@@ -292,10 +316,14 @@ class HTTPTest(unittest.TestCase):
 
     def test_update_status_accepts_normal_reply(self):
         _, sent = self.request("POST", "/messages", self.message())
-        with sqlite3.connect(self.db) as db:
-            message_id = db.execute(
-                "SELECT message_id FROM http_requests WHERE id=?", (sent["id"],)
-            ).fetchone()[0]
+        db = sqlite3.connect(self.db)
+        try:
+            with db:
+                message_id = db.execute(
+                    "SELECT message_id FROM http_requests WHERE id=?", (sent["id"],)
+                ).fetchone()[0]
+        finally:
+            db.close()
         old_stdin = http_server.sys.stdin
         try:
 

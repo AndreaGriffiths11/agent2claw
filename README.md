@@ -15,8 +15,6 @@ python3 runtime.py --replay --agent YOUR_AGENT_ID
 
 Replace `YOUR_AGENT_ID` with an id from `openclaw agents list`. The test suite and replay use fixtures and call no model or provider. There is no install step and no global configuration change.
 
-Until the owner publishes the repository, cloning may require a GitHub account that has been granted access.
-
 **Requirements:** macOS with Grok Bot using Mac Shell, OpenClaw `2026.9.1` with its Gateway running, an existing OpenClaw agent you choose, and `python3` (3.9+), `bash`, and `sqlite3` on `PATH`. See [Setup](docs/setup.md) for the full checklist.
 
 ## What It Does
@@ -82,7 +80,7 @@ Details and guardrails: [Responsible Use](docs/responsible-use.md). To report a 
 
 ## Project status
 
-Unofficial developer preview shared with a named audience. The GitHub repository may still require access until the owner publishes it. The code has not been packaged, deployed, or installed globally. Verification history is in [Compatibility](docs/compatibility.md).
+Unofficial developer preview. This repository is not packaged, deployed, or installed globally. Verification history is in [Compatibility](docs/compatibility.md).
 
 ## License and provenance
 

@@ -10,7 +10,7 @@ This preview has been tested on macOS with:
 - OpenClaw `2026.9.1`, with its Gateway running;
 - an existing OpenClaw agent you deliberately choose for this bridge;
 - Python `3.9+`, Bash, and SQLite (`python3`, `bash`, and `sqlite3` on `PATH`);
-- Git and access to this GitHub repository (the owner may still require permission while it is unpublished).
+- Git (a normal `git clone` of this repository).
 
 Check the local prerequisites without invoking a model:
 
@@ -54,7 +54,7 @@ git clone https://github.com/AndreaGriffiths11/grokbot2claw.git
 cd grokbot2claw
 ```
 
-Until the owner publishes the repository, cloning may require a GitHub account that has been granted access. There is no install step.
+Anyone can clone the repository with the command above. There is no install step.
 
 ## 2. Run the offline test suite
 

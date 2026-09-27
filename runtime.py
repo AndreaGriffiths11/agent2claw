@@ -307,8 +307,12 @@ assert "untrusted external message" in prompt
                 real_openclaw = str(fixture)
 
             http_server.ensure_secure_db_file(db_path)
-            with sqlite3.connect(db_path) as db:
-                db.executescript(SCHEMA)
+            db = sqlite3.connect(db_path)
+            try:
+                with db:
+                    db.executescript(SCHEMA)
+            finally:
+                db.close()
 
             token = secrets.token_urlsafe(48)
             digest = hashlib.sha256(token.encode("ascii")).hexdigest()
@@ -470,11 +474,15 @@ raise SystemExit(completed.returncode)
                 raise TimeoutError("request did not reach a terminal state before its deadline")
 
             http_server.ensure_secure_db_file(db_path)
-            with sqlite3.connect(db_path) as db:
-                replies = db.execute(
-                    "SELECT body FROM messages WHERE team=? AND from_agent=? AND to_agent=?",
-                    ("localtest", agent, principal),
-                ).fetchall()
+            db = sqlite3.connect(db_path)
+            try:
+                with db:
+                    replies = db.execute(
+                        "SELECT body FROM messages WHERE team=? AND from_agent=? AND to_agent=?",
+                        ("localtest", agent, principal),
+                    ).fetchall()
+            finally:
+                db.close()
             result["mailbox_reply_exact"] = replies == [(result["actual_reply"],)]
             result["cli_invocations"] = 1 if marker_path.exists() else 0
             if proof_path.exists():

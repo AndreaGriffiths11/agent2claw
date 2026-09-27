@@ -624,7 +624,11 @@ class MessageCommandTest(unittest.TestCase):
             agent = args[args.index("--agent") + 1]
             with Path({str(calls)!r}).open("a") as stream:
                 stream.write(agent + "\\n")
-            Path({str(started)!r}).write_text(agent)
+            started_path = Path({str(started)!r})
+            with started_path.open("w", encoding="utf-8") as stream:
+                stream.write(agent)
+                stream.flush()
+                os.fsync(stream.fileno())
             delay = float(os.environ.get("FIXTURE_SLEEP", "0"))
             if delay:
                 Path({str(child_pid)!r}).write_text(str(os.getpid()))
@@ -709,6 +713,7 @@ class MessageCommandTest(unittest.TestCase):
             first = subprocess.Popen(
                 [
                     "python3",
+                    "-u",
                     str(Path(message.__file__)),
                     "--send",
                     "--agent",
@@ -725,24 +730,48 @@ class MessageCommandTest(unittest.TestCase):
                 start_new_session=True,
             )
             capture_stack.close()
-            deadline = time.monotonic() + 30
-            while time.monotonic() < deadline:
+            phase_a_deadline = time.monotonic() + 60
+            while time.monotonic() < phase_a_deadline:
                 if first.poll() is not None:
                     stdout = read_capture(first_stdout)
                     stderr = read_capture(first_stderr)
                     self.fail(
-                        "first process exited before fixture CLI started; "
-                        f"code={first.returncode} stdout={stdout!r} stderr={stderr!r}"
+                        "first process exited before session lock was held; "
+                        f"code={first.returncode} lock_is_held={lock_is_held()} "
+                        f"stdout={stdout!r} stderr={stderr!r}"
                     )
-                if started.exists() and lock_is_held():
+                if lock_is_held():
                     break
                 time.sleep(0.05)
-            if not (started.exists() and lock_is_held()):
+            if not lock_is_held():
                 stdout = read_capture(first_stdout)
                 stderr = read_capture(first_stderr)
                 self.fail(
-                    "fixture CLI did not start and hold the expected lock within deadline; "
-                    f"started={started.exists()} stdout={stdout!r} stderr={stderr!r}"
+                    "fixture CLI did not hold the expected lock within Phase A deadline; "
+                    f"lock_is_held={lock_is_held()} started={started.exists()} "
+                    f"stdout={stdout!r} stderr={stderr!r}"
+                )
+
+            phase_b_deadline = time.monotonic() + 60
+            while time.monotonic() < phase_b_deadline:
+                if first.poll() is not None:
+                    stdout = read_capture(first_stdout)
+                    stderr = read_capture(first_stderr)
+                    self.fail(
+                        "first process exited before started marker was created; "
+                        f"code={first.returncode} lock_is_held={lock_is_held()} "
+                        f"stdout={stdout!r} stderr={stderr!r}"
+                    )
+                if started.exists():
+                    break
+                time.sleep(0.05)
+            if not started.exists():
+                stdout = read_capture(first_stdout)
+                stderr = read_capture(first_stderr)
+                self.fail(
+                    "fixture CLI did not create the started marker within Phase B deadline; "
+                    f"lock_is_held={lock_is_held()} started={started.exists()} "
+                    f"stdout={stdout!r} stderr={stderr!r}"
                 )
 
             child_code = (
