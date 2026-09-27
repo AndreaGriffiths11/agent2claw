@@ -4,7 +4,15 @@ GrokBot2Claw is a developer preview with no tagged releases. Entries are grouped
 
 ## Unreleased
 
-- docs: public-clone wording (repository is public); CI hardening for macOS session-lock flake and SQLite ResourceWarnings
+## v0.1.0-preview — 2026-09-27
+
+First public developer preview.
+
+- one-message local bridge from Grok Bot Mac Shell to a chosen OpenClaw agent
+- doctor mode, secure `--output-dir`, session lock, prompt-file privacy (no message text on argv)
+- docs for setup, responsible use, compatibility, troubleshooting
+- CI on Linux (Python 3.9) and macOS (Python 3.13); Apache-2.0
+- docs: public-clone wording; CI hardening for macOS session-lock flake and SQLite ResourceWarnings
 
 ### 2026-09-20
 - docs: reorganize documentation into `docs/` (setup, responsible use, compatibility, troubleshooting), thin the README, and add SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md, PRIVACY.md, and this changelog
