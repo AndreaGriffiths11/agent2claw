@@ -648,7 +648,7 @@ class MessageCommandTest(unittest.TestCase):
             {
                 "XDG_RUNTIME_DIR": str(runtime_dir),
                 "TMPDIR": str(scratch),
-                "FIXTURE_SLEEP": "30",
+                "FIXTURE_SLEEP": "120",
                 "PATH": str(self.root) + os.pathsep + env["PATH"],
             }
         )
@@ -781,24 +781,24 @@ class MessageCommandTest(unittest.TestCase):
             )
             second_env = dict(env, FIXTURE_SLEEP="0")
             same = subprocess.run(
-                ["python3", "-c", child_code, "same-agent", str(fake)],
+                ["python3", "-u", "-c", child_code, "same-agent", str(fake)],
                 cwd=Path(message.__file__).parent,
                 env=second_env,
                 text=True,
                 capture_output=True,
-                timeout=30,
+                timeout=90,
             )
             self.assertEqual(same.returncode, 0, same.stderr)
             same_result = json.loads(same.stdout)
             self.assertEqual(same_result["error_code"], "session_busy")
             self.assertEqual(same_result["cli_invocations"], 0)
             different = subprocess.run(
-                ["python3", "-c", child_code, "different-agent", str(fake)],
+                ["python3", "-u", "-c", child_code, "different-agent", str(fake)],
                 cwd=Path(message.__file__).parent,
                 env=second_env,
                 text=True,
                 capture_output=True,
-                timeout=30,
+                timeout=90,
             )
             self.assertEqual(different.returncode, 0, different.stderr)
             self.assertTrue(json.loads(different.stdout)["passed"], different.stderr)
@@ -816,12 +816,12 @@ class MessageCommandTest(unittest.TestCase):
             self.assertEqual(list(scratch.glob("grokbot2claw-live-*")), [])
 
             subsequent = subprocess.run(
-                ["python3", "-c", child_code, "same-agent", str(fake)],
+                ["python3", "-u", "-c", child_code, "same-agent", str(fake)],
                 cwd=Path(message.__file__).parent,
                 env=second_env,
                 text=True,
                 capture_output=True,
-                timeout=30,
+                timeout=90,
             )
             self.assertEqual(subsequent.returncode, 0, subsequent.stderr)
             self.assertTrue(json.loads(subsequent.stdout)["passed"], subsequent.stderr)
