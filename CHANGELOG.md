@@ -4,6 +4,8 @@ GrokBot2Claw is a developer preview with no tagged releases. Entries are grouped
 
 ## Unreleased
 
+- docs: public-clone wording (repository is public); CI hardening for macOS session-lock flake and SQLite ResourceWarnings
+
 ### 2026-09-20
 - docs: reorganize documentation into `docs/` (setup, responsible use, compatibility, troubleshooting), thin the README, and add SECURITY.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md, PRIVACY.md, and this changelog
 - docs: describe the repository as a shareable developer preview instead of a private staging preview
