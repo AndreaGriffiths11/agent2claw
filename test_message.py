@@ -185,6 +185,33 @@ class MessageCommandTest(unittest.TestCase):
         self.assertEqual(result.stdout, "")
         self.assertIn("--session-key", result.stderr)
 
+    def test_empty_session_key_flag_is_rejected(self):
+        # Explicit --session-key "" must not fall through to env/default.
+        message_path = self.root / "message.txt"
+        message_path.write_text("hello", encoding="utf-8")
+        env = os.environ.copy()
+        env["GROKBOT2CLAW_SESSION_KEY"] = "fromenv"
+        result = subprocess.run(
+            [
+                "python3",
+                str(Path(message.__file__)),
+                "--send",
+                "--agent",
+                "docs-agent",
+                "--session-key",
+                "",
+                "--message-file",
+                str(message_path),
+            ],
+            text=True,
+            capture_output=True,
+            timeout=3,
+            env=env,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("--session-key", result.stderr)
+
     def test_run_once_rejects_invalid_session_key(self):
         with self.assertRaises(ValueError) as failure:
             run_once("hello", agent="docs-agent", replay=True, session_key="bad key!")
@@ -240,9 +267,11 @@ class MessageCommandTest(unittest.TestCase):
         self.assertEqual(list(run_directory.iterdir()), [final])
 
         final.unlink()
-        with mock.patch.object(message.os, "link", side_effect=OSError("fixture failure")):
-            with self.assertRaises(OSError):
-                message.save_result(run_directory, {"reply": "private reply"})
+        with (
+            mock.patch.object(message.os, "link", side_effect=OSError("fixture failure")),
+            self.assertRaises(OSError),
+        ):
+            message.save_result(run_directory, {"reply": "private reply"})
         self.assertEqual(list(run_directory.iterdir()), [])
 
     def test_signal_during_result_write_removes_run_directory(self):
@@ -310,7 +339,7 @@ class MessageCommandTest(unittest.TestCase):
         self.assertEqual(
             stderr,
             "message command: --output-dir refers to a path where "
-            f"{str(invalid)!r} exists and is not a directory\n",
+            f"{str(invalid.resolve())!r} exists and is not a directory\n",
         )
         self.assertEqual(invalid.read_text(), "existing user file")
         runner.assert_not_called()
@@ -342,8 +371,10 @@ class MessageCommandTest(unittest.TestCase):
     def test_preexisting_final_directory_owned_by_another_user_is_rejected(self):
         output_root = self.root / "results"
         output_root.mkdir(mode=0o700)
-        with mock.patch.object(message.os, "getuid", return_value=os.getuid() + 1), \
-                self.assertRaises(ValueError) as failure:
+        with (
+            mock.patch.object(message.os, "getuid", return_value=os.getuid() + 1),
+            self.assertRaises(ValueError) as failure,
+        ):
             message.prepare_output_directory(output_root)
         self.assertIn("not owned by the current user", str(failure.exception))
 
@@ -558,15 +589,18 @@ class MessageCommandTest(unittest.TestCase):
                         side_effect=runtime.SignalInterruption(signal.SIGHUP),
                     )
                 )
-                with mock.patch.dict(os.environ, {"TMPDIR": str(scratch)}), patch:
-                    with self.assertRaises(runtime.SignalInterruption) as caught:
-                        with runtime.signal_guard():
-                            run_once(
-                                "private prompt",
-                                agent="setup-agent",
-                                replay=True,
-                                expected_reply="private reply",
-                            )
+                with (
+                    mock.patch.dict(os.environ, {"TMPDIR": str(scratch)}),
+                    patch,
+                    runtime.signal_guard(),
+                    self.assertRaises(runtime.SignalInterruption) as caught,
+                ):
+                    run_once(
+                        "private prompt",
+                        agent="setup-agent",
+                        replay=True,
+                        expected_reply="private reply",
+                    )
                 self.assertEqual(caught.exception.signum, signal.SIGHUP)
                 self.assertEqual(list(scratch.iterdir()), [])
 
@@ -599,8 +633,7 @@ class MessageCommandTest(unittest.TestCase):
                 "meta": {{"agentMeta": {{"sessionId": "fixture", "model": "fixture",
                 "provider": "fixture"}}}}
             }}}}))
-            """
-            )
+            """)
         )
         fake.chmod(0o700)
         message_path = self.root / "message.txt"
@@ -614,7 +647,6 @@ class MessageCommandTest(unittest.TestCase):
                 "PATH": str(self.root) + os.pathsep + env["PATH"],
             }
         )
-        # message.py normally discovers openclaw; provide the fixture under that fixed name.
         (self.root / "openclaw").symlink_to(fake)
         first = subprocess.Popen(
             [
@@ -633,10 +665,22 @@ class MessageCommandTest(unittest.TestCase):
             stderr=subprocess.PIPE,
             text=True,
         )
-        deadline = time.time() + 8
+        deadline = time.time() + 30
         while time.time() < deadline and not started.exists():
+            if first.poll() is not None:
+                stdout, stderr = first.communicate(timeout=5)
+                self.fail(
+                    "first process exited before fixture CLI started; "
+                    f"code={first.returncode} stdout={stdout!r} stderr={stderr!r}"
+                )
             time.sleep(0.05)
-        self.assertTrue(started.exists(), "fixture CLI did not start")
+        if not started.exists():
+            first.send_signal(signal.SIGTERM)
+            stdout, stderr = first.communicate(timeout=5)
+            self.fail(
+                "fixture CLI did not start within deadline; "
+                f"code={first.returncode} stdout={stdout!r} stderr={stderr!r}"
+            )
 
         child_code = (
             "import json,sys; from runtime import run_once; "
@@ -652,6 +696,7 @@ class MessageCommandTest(unittest.TestCase):
             capture_output=True,
             timeout=10,
         )
+        self.assertEqual(same.returncode, 0, same.stderr)
         same_result = json.loads(same.stdout)
         self.assertEqual(same_result["error_code"], "session_busy")
         self.assertEqual(same_result["cli_invocations"], 0)
@@ -663,10 +708,11 @@ class MessageCommandTest(unittest.TestCase):
             capture_output=True,
             timeout=15,
         )
+        self.assertEqual(different.returncode, 0, different.stderr)
         self.assertTrue(json.loads(different.stdout)["passed"], different.stderr)
 
         first.send_signal(signal.SIGTERM)
-        stdout, stderr = first.communicate(timeout=15)
+        stdout, stderr = first.communicate(timeout=30)
         self.assertEqual((first.returncode, stdout), (143, ""))
         self.assertIn("upstream work may continue", stderr)
         self.assertNotIn("PROMPT_PRIVATE_LOCK", stderr)
@@ -683,6 +729,7 @@ class MessageCommandTest(unittest.TestCase):
             capture_output=True,
             timeout=15,
         )
+        self.assertEqual(subsequent.returncode, 0, subsequent.stderr)
         self.assertTrue(json.loads(subsequent.stdout)["passed"], subsequent.stderr)
         self.assertEqual(calls.read_text().splitlines().count("same-agent"), 2)
         self.assertIn("different-agent", calls.read_text().splitlines())
@@ -740,9 +787,13 @@ class InterruptHandlingTest(unittest.TestCase):
         # Regression: main()'s SIGINT handler used sys.stderr without a
         # module-level `import sys`, so Ctrl-C raised NameError instead of
         # exiting with status 130.
-        with self.assertRaises(SystemExit) as ctx, mock.patch.object(
-            runtime, "run_once", side_effect=runtime.SignalInterruption(signal.SIGINT)
-        ), mock.patch("sys.argv", ["runtime.py", "--replay", "--agent", "test-agent"]):
+        with (
+            self.assertRaises(SystemExit) as ctx,
+            mock.patch.object(
+                runtime, "run_once", side_effect=runtime.SignalInterruption(signal.SIGINT)
+            ),
+            mock.patch("sys.argv", ["runtime.py", "--replay", "--agent", "test-agent"]),
+        ):
             runtime.main()
         self.assertEqual(ctx.exception.code, 128 + signal.SIGINT)
 

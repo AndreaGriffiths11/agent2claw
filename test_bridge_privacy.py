@@ -44,7 +44,8 @@ class BridgePromptPrivacyTest(unittest.TestCase):
                     i=$((i + 1))
                 done
                 if [ -n "${{1-}}" ] && [ -f "$1" ]; then
-                    stat -c 'prompt_file_mode=%a' "$1" >>{self.argv_capture}
+                    mode=$(python3 -c 'import os, stat, sys; info = os.stat(sys.argv[1], follow_symlinks=False); print("prompt_file_mode=%03o" % stat.S_IMODE(info.st_mode))' "$1")
+                    printf '%s\\n' "$mode" >>{self.argv_capture}
                     cat "$1" >{self.content_capture}
                 fi
                 printf 'stub reply'

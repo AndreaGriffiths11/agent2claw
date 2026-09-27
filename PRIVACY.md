@@ -22,7 +22,8 @@ All three travel through a temporary SQLite mailbox and a loopback HTTP listener
 
 - an `auth.json` file holding the SHA-256 of a random bearer token, mode `0600`
 - a `messages.db` SQLite mailbox
-- prompt files passed between the bridge, the adapter, and OpenClaw, mode `0600`- a small JSON record of the OpenClaw CLI result (run id, status, session id, model, provider, tool summary) used to build the reply
+- prompt files passed between the bridge, the adapter, and OpenClaw, mode `0600`
+- a small JSON record of the OpenClaw CLI result (run id, status, session id, model, provider, tool summary) used to build the reply
 - dispatch counters, temporary reply files, and wrapper scripts used by the bridge
 
 The command removes this directory, the listener, and the bridge process group when it exits, including on failure or catchable interruption (`SIGHUP`, `SIGINT`, or `SIGTERM`). `SIGKILL` cannot be handled. A provider request already accepted upstream may continue after local cleanup.

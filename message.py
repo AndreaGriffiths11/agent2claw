@@ -36,7 +36,9 @@ def read_message(source):
         message = data.decode("utf-8")
     except UnicodeDecodeError:
         raise ValueError("message must be valid UTF-8") from None
-    if not message or "\x00" in message or "\x1f" in message:
+    if not message or any(
+        (ord(ch) < 32 and ch not in "\t\n\r") or ord(ch) == 127 for ch in message
+    ):
         raise ValueError("message is empty or contains unsupported control characters")
     return message
 
@@ -307,7 +309,12 @@ def _main(argv=None, runner=run_once):
         parser.error("--send requires --message-file PATH (use - for stdin)")
     if not AGENT_RE.fullmatch(args.agent):
         parser.error("--agent must contain only letters, digits, underscores, or hyphens")
-    session_key = args.session_key or os.environ.get("GROKBOT2CLAW_SESSION_KEY") or "grokbot2claw"
+    if args.session_key is None:
+        session_key = os.environ.get("GROKBOT2CLAW_SESSION_KEY")
+        if session_key is None:
+            session_key = "grokbot2claw"
+    else:
+        session_key = args.session_key
     if not AGENT_RE.fullmatch(session_key):
         parser.error("--session-key must contain only letters, digits, underscores, or hyphens")
 

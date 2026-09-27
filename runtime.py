@@ -89,10 +89,8 @@ def _secure_lock_directory():
     if parent is None:
         parent = Path(tempfile.gettempdir())
     path = parent / f"grokbot2claw-locks-{os.getuid()}"
-    try:
+    with contextlib.suppress(FileExistsError):
         path.mkdir(mode=0o700)
-    except FileExistsError:
-        pass
     info = os.stat(path, follow_symlinks=False)
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise RuntimeError("unsafe local session lock directory")

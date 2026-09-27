@@ -38,6 +38,10 @@ STATUS_ERRORS = {
 }
 
 
+def _contains_unsupported_control_chars(value):
+    return any((ord(ch) < 32 and ch not in "\t\n\r") or ord(ch) == 127 for ch in value)
+
+
 def utc_now():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -217,10 +221,10 @@ def update_status(db_path, message_id, status_value, error_code=None):
             except UnicodeDecodeError:
                 status_value, error_code = "failed", "invalid_reply"
             else:
-                # Same control-character rule as message.py's read_message: the
+                # Same control-character rule as bridge.sh validate_reply: the
                 # bridge validates replies before calling --update-status, but
                 # this keeps the check in place in-process, defense-in-depth.
-                if not reply or "\x00" in reply or "\x1f" in reply:
+                if not reply or _contains_unsupported_control_chars(reply):
                     raise ValueError("reply is empty or contains unsupported control characters")
     if status_value == "failed" and error_code not in STATUS_ERRORS:
         raise ValueError("invalid error code")
@@ -348,8 +352,7 @@ class Handler(BaseHTTPRequestHandler):
             not isinstance(body, str)
             or not body
             or len(body.encode("utf-8")) > MAX_MESSAGE_BYTES
-            or "\x00" in body
-            or "\x1f" in body
+            or _contains_unsupported_control_chars(body)
         ):
             self._json(400, {"error": "invalid_body"})
             return

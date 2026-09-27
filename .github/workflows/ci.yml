@@ -71,6 +71,6 @@ jobs:
       - name: Check shell syntax
         run: bash -n bridge.sh adapters/openclaw.sh
       - name: Run fixture suite
-        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test_message.py test_http_server.py test_openclaw_adapter.py
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test_message.py test_http_server.py test_openclaw_adapter.py test_bridge_privacy.py
       - name: Run synthetic replay
         run: PYTHONDONTWRITEBYTECODE=1 python3 runtime.py --replay --agent ci-agent

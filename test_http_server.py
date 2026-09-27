@@ -257,15 +257,34 @@ class HTTPTest(unittest.TestCase):
             ).fetchone()[0]
         old_stdin = http_server.sys.stdin
         try:
+            for bad in ("unsafe\x01reply", "unsafe\x7freply", "unsafe\x1freply"):
+                with self.subTest(bad=bad):
 
-            class Input:
-                buffer = __import__("io").BytesIO(b"unsafe\x1freply")
+                    class Input:
+                        buffer = __import__("io").BytesIO(bad.encode("utf-8"))
 
-            http_server.sys.stdin = Input()
-            with self.assertRaisesRegex(
-                ValueError, "reply is empty or contains unsupported control characters"
-            ):
-                http_server.update_status(str(self.db), message_id, "completed")
+                    http_server.sys.stdin = Input()
+                    with self.assertRaisesRegex(
+                        ValueError, "reply is empty or contains unsupported control characters"
+                    ):
+                        http_server.update_status(str(self.db), message_id, "completed")
+            for allowed in ("tab\tallowed", "newline\nallowed", "cr\rallowed"):
+                with self.subTest(allowed=allowed):
+
+                    class Input:
+                        buffer = __import__("io").BytesIO(allowed.encode("utf-8"))
+
+                    http_server.sys.stdin = Input()
+                    http_server.update_status(str(self.db), message_id, "completed")
+                    _, result = self.request("GET", "/messages/" + sent["id"])
+                    self.assertEqual((result["status"], result["reply"]), ("completed", allowed))
+                    # Reuse the same request row by resetting it to pending for the next subtest.
+                    with sqlite3.connect(self.db) as db:
+                        db.execute(
+                            "UPDATE http_requests SET status='pending', reply=NULL, "
+                            "error_code=NULL WHERE message_id=?",
+                            (message_id,),
+                        )
         finally:
             http_server.sys.stdin = old_stdin
         _, result = self.request("GET", "/messages/" + sent["id"])
