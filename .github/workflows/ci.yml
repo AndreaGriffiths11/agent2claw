@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install lint tools
+        run: |
+          python3 -m pip install ruff==0.16.8
+          npm ci
+          curl --fail --silent --show-error --location --output shellcheck.tar.xz \
+            https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz
+          echo "8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198  shellcheck.tar.xz" \
+            | sha256sum --check
+          tar -xJf shellcheck.tar.xz
+          sudo install -m 0755 shellcheck-v0.11.0/shellcheck /usr/local/bin/shellcheck
+      - name: Lint supported project files with Biome
+        run: npm run lint
+      - name: Lint and check Python formatting
+        run: |
+          python3 -m ruff check .
+          python3 -m ruff format --check .
+      - name: Lint shell scripts
+        run: shellcheck bridge.sh adapters/openclaw.sh
+
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux / Python 3.9
+            os: ubuntu-latest
+            python: "3.9"
+          - name: macOS / Python 3.13
+            os: macos-latest
+            python: "3.13"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Check runner dependencies
+        run: command -v python3 bash sqlite3
+      - name: Compile Python
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile *.py
+      - name: Check shell syntax
+        run: bash -n bridge.sh adapters/openclaw.sh
+      - name: Run fixture suite
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test_message.py test_http_server.py test_openclaw_adapter.py test_bridge_privacy.py
+      - name: Run synthetic replay
+        run: PYTHONDONTWRITEBYTECODE=1 python3 runtime.py --replay --agent ci-agent
