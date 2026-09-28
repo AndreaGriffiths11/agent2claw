@@ -8,7 +8,9 @@ Send one message from Grok Bot to your OpenClaw agent and get the reply back thr
 
 A one-minute walkthrough of what the bridge does, how the parts fit, and the privacy decision under the hood. Captions in English.
 
-![grokbot2claw explainer video](docs/grokbot2claw-explainer-2026-09-28-v1.mp4)
+<video src="docs/grokbot2claw-explainer-2026-09-28-v1.mp4" controls muted playsinline width="720">
+  Your browser does not support HTML5 video. <a href="docs/grokbot2claw-explainer-2026-09-28-v1.mp4">Download the explainer</a>.
+</video>
 
 ## Quick Start
 
