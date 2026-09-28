@@ -4,6 +4,12 @@ Send one message from Grok Bot to your OpenClaw agent and get the reply back thr
 
 **Unofficial local-first developer preview.** Not affiliated with or endorsed by xAI, Grok, Cursor, Anysphere, or OpenClaw.
 
+## Explainer video
+
+A one-minute walkthrough of what the bridge does, how the parts fit, and the privacy decision under the hood. Captions in English.
+
+![grokbot2claw explainer video](docs/grokbot2claw-explainer-2026-09-28-v1.mp4)
+
 ## Quick Start
 
 ```bash
