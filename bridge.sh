@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # agmsg-bridge — an optional autonomous delivery layer for agmsg.
 #
+# NOTE (grokbot2claw): this project does not run the loop below as a daemon.
+# runtime.py spawns this script once per message with AGMSG_BRIDGE_MAX_DISPATCH=1
+# and AGMSG_BRIDGE_MAX_BOT_HOPS=0, then kills the whole process group after the
+# reply is delivered. See run_once() in runtime.py.
+#
 # agmsg (https://github.com/fujibee/agmsg) is a shared SQLite inbox: agents send and check
 # messages on demand, with no daemon. That is great for agents that poll their
 # own mail, but an agent with no agmsg hook of its own never sees a message —
