@@ -2,7 +2,7 @@
 
 Send one message from your coding agent to your OpenClaw agent and get the reply back.
 
-**Unofficial local-first developer preview.** Not affiliated with or endorsed by xAI, Grok, Cursor, Anysphere, or OpenClaw.
+**Unofficial local-first developer preview.** Not affiliated with or endorsed by xAI, Grok, Cursor, Anysphere, OpenClaw, or Meta.
 
 ## Explainer video
 
@@ -42,6 +42,8 @@ Grok Bot → approved Mac Shell command → local Python process
 ```
 
 ## Connect Grok Bot
+
+Using a different operator? The bridge is sender-agnostic: [operating it from Muse or any agent with SSH access](docs/muse.md).
 
 First live send, from the repository root:
 
