@@ -31,7 +31,7 @@ Before sending anything, run a local-only preflight check. It never invokes a mo
 python3 message.py --doctor
 ```
 
-`--doctor` is a standalone mode: it does not require `--send` or `--agent`. It checks, in order: the Python version, whether `openclaw`, `bash`, and `sqlite3` are on `PATH`, that `adapters/openclaw.sh` and `bridge.sh` exist and are executable, that `runtime.py` and `http_server.py` import cleanly, that a temporary directory can be created and written, and that the local session lock directory can be created and passes its own safety check. Each line reports `ok` or `FAIL`; every `FAIL` line names a concrete fix. The command exits `0` only if every check passes.
+`--doctor` is a standalone mode: it does not require `--send` or `--agent`. It checks, in order: the Python version, whether `openclaw` and `bash` are on `PATH`, that the `sqlite3` on `PATH` supports `RETURNING` (the same probe `bridge.sh` runs at startup, so a pre-3.35 SQLite fails here rather than at send time), that `adapters/openclaw.sh` and `bridge.sh` exist and are executable, that `runtime.py` and `http_server.py` import cleanly, that a temporary directory can be created and written, and that the local session lock directory can be created and passes its own safety check. Each line reports `ok` or `FAIL`; every `FAIL` line names a concrete fix. The command exits `0` only if every check passes.
 
 Example output when OpenClaw is not yet installed:
 
@@ -39,7 +39,7 @@ Example output when OpenClaw is not yet installed:
 [ok] python version: python 3.12 >= 3.9
 [FAIL] openclaw on PATH: openclaw executable not found on PATH (fix: install OpenClaw per its official documentation, then ensure `openclaw` is on PATH; verify with `command -v openclaw`)
 [ok] bash on PATH: bash found at /bin/bash
-[ok] sqlite3 on PATH: sqlite3 found at /usr/bin/sqlite3
+[ok] sqlite3 RETURNING support: sqlite3 3.51.0 at /usr/bin/sqlite3 supports RETURNING
 [ok] adapters/openclaw.sh: adapters/openclaw.sh exists and is executable
 [ok] bridge.sh: bridge.sh exists and is executable
 [ok] runtime.py import: runtime imports cleanly

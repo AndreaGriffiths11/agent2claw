@@ -879,6 +879,35 @@ class MessageCommandTest(unittest.TestCase):
 
 
 class DoctorCommandTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.real_sqlite3 = shutil.which("sqlite3")
+        self.assertIsNotNone(self.real_sqlite3, "sqlite3 is a documented test requirement")
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def patch_which(self, missing=(), sqlite3_path=None):
+        def fake_which(name):
+            if name in missing:
+                return None
+            if name == "sqlite3":
+                return sqlite3_path or self.real_sqlite3
+            return "/usr/bin/" + name
+
+        return mock.patch.object(message.shutil, "which", side_effect=fake_which)
+
+    def write_old_sqlite3(self):
+        # Emulates a pre-3.35 shell: reports its version, rejects RETURNING.
+        stub = self.root / "sqlite3"
+        stub.write_text(
+            '#!/usr/bin/env bash\nif [ "$1" = "-version" ]; then echo "3.31.1 2020-01-27"; exit 0; fi\n'
+            'echo "Parse error: near \\"RETURNING\\": syntax error" >&2\nexit 1\n'
+        )
+        stub.chmod(0o700)
+        return str(stub)
+
     def call_main(self, argv):
         stdout, stderr = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
@@ -886,19 +915,17 @@ class DoctorCommandTest(unittest.TestCase):
         return status, stdout.getvalue(), stderr.getvalue()
 
     def test_doctor_all_green_exits_zero(self):
-        with mock.patch.object(message.shutil, "which", return_value="/usr/bin/openclaw"):
+        with self.patch_which():
             status, stdout, stderr = self.call_main(["--doctor"])
         self.assertEqual(status, 0, stderr)
         self.assertNotIn("FAIL", stdout)
         self.assertIn("all checks passed", stdout)
+        self.assertIn("supports RETURNING", stdout)
         for label, _ in message.DOCTOR_CHECKS:
             self.assertIn(f"[ok] {label}:", stdout)
 
     def test_doctor_reports_missing_openclaw_and_fails(self):
-        def fake_which(name):
-            return None if name == "openclaw" else "/usr/bin/" + name
-
-        with mock.patch.object(message.shutil, "which", side_effect=fake_which):
+        with self.patch_which(missing={"openclaw"}):
             status, stdout, stderr = self.call_main(["--doctor"])
         self.assertNotEqual(status, 0)
         self.assertIn("[FAIL] openclaw on PATH:", stdout)
@@ -906,24 +933,31 @@ class DoctorCommandTest(unittest.TestCase):
         self.assertIn("one or more checks failed", stderr)
 
     def test_doctor_reports_missing_sqlite3_and_fails(self):
-        def fake_which(name):
-            return None if name == "sqlite3" else "/usr/bin/" + name
-
-        with mock.patch.object(message.shutil, "which", side_effect=fake_which):
+        with self.patch_which(missing={"sqlite3"}):
             status, stdout, stderr = self.call_main(["--doctor"])
         self.assertNotEqual(status, 0)
-        self.assertIn("[FAIL] sqlite3 on PATH:", stdout)
+        self.assertIn("[FAIL] sqlite3 RETURNING support:", stdout)
+        self.assertIn("not found on PATH", stdout)
+        self.assertIn("3.35", stdout)
+        self.assertIn("one or more checks failed", stderr)
+
+    def test_doctor_reports_sqlite3_without_returning_and_fails(self):
+        with self.patch_which(sqlite3_path=self.write_old_sqlite3()):
+            status, stdout, stderr = self.call_main(["--doctor"])
+        self.assertNotEqual(status, 0)
+        self.assertIn("[FAIL] sqlite3 RETURNING support: sqlite3 3.31.1", stdout)
+        self.assertIn("does not support RETURNING", stdout)
         self.assertIn("3.35", stdout)
         self.assertIn("one or more checks failed", stderr)
 
     def test_doctor_prints_one_line_per_check(self):
-        with mock.patch.object(message.shutil, "which", return_value="/usr/bin/openclaw"):
+        with self.patch_which():
             _, stdout, _ = self.call_main(["--doctor"])
         lines = [line for line in stdout.splitlines() if line.startswith("[")]
         self.assertEqual(len(lines), len(message.DOCTOR_CHECKS))
 
     def test_doctor_does_not_require_send_or_agent(self):
-        with mock.patch.object(message.shutil, "which", return_value="/usr/bin/openclaw"):
+        with self.patch_which():
             status, _, stderr = self.call_main(["--doctor"])
         self.assertEqual(status, 0, stderr)
 

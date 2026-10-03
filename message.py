@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -178,15 +179,39 @@ def _check_bash_on_path():
     return False, "bash executable not found on PATH (fix: install bash; bridge.sh requires it)"
 
 
+SQLITE_RETURNING_PROBE = "CREATE TABLE probe(x); INSERT INTO probe VALUES(1) RETURNING x;"
+
+
 def _check_sqlite3_on_path():
     found = shutil.which("sqlite3")
-    if found:
-        return True, f"sqlite3 found at {found}"
-    return False, (
-        "sqlite3 executable not found on PATH "
-        "(fix: install the SQLite command-line shell, version 3.35 or newer; "
-        "bridge.sh uses it to claim messages)"
-    )
+    if not found:
+        return False, (
+            "sqlite3 executable not found on PATH "
+            "(fix: install the SQLite command-line shell, version 3.35 or newer; "
+            "bridge.sh uses it to claim messages)"
+        )
+    # Same capability probe as bridge.sh: presence alone is not enough, since
+    # the bridge's claim query needs UPDATE ... RETURNING (SQLite 3.35+).
+    try:
+        version = subprocess.run(
+            [found, "-version"], capture_output=True, text=True, timeout=10
+        ).stdout.split()
+        version = version[0] if version else "unknown"
+        probe = subprocess.run(
+            [found, ":memory:", SQLITE_RETURNING_PROBE],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, f"sqlite3 at {found} could not be run: {error} (fix: reinstall SQLite)"
+    if probe.returncode != 0 or probe.stdout.strip() != "1":
+        return False, (
+            f"sqlite3 {version} at {found} does not support RETURNING "
+            "(fix: install SQLite 3.35 or newer; bridge.sh uses UPDATE ... RETURNING "
+            "to claim messages)"
+        )
+    return True, f"sqlite3 {version} at {found} supports RETURNING"
 
 
 def _check_executable_file(path, label):
@@ -259,7 +284,7 @@ DOCTOR_CHECKS = [
     ("python version", _check_python_version),
     ("openclaw on PATH", _check_openclaw_on_path),
     ("bash on PATH", _check_bash_on_path),
-    ("sqlite3 on PATH", _check_sqlite3_on_path),
+    ("sqlite3 RETURNING support", _check_sqlite3_on_path),
     ("adapters/openclaw.sh", _check_adapter_script),
     ("bridge.sh", _check_bridge_script),
     ("runtime.py import", _check_runtime_imports),
