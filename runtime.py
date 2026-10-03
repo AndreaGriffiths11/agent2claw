@@ -37,6 +37,8 @@ CREATE TABLE messages (
 CREATE INDEX idx_unread ON messages(team, to_agent, read_at) WHERE read_at IS NULL;
 """
 TERMINAL = {"completed", "failed"}
+LIVE_DEADLINE_SECONDS = 300
+REPLAY_DEADLINE_SECONDS = 10
 AGENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 SESSION_KEY = "grokbot2claw"
 REPLAY_SESSION_KEY = "grokbot2claw-replay"
@@ -455,8 +457,16 @@ raise SystemExit(completed.returncode)
             if post_status != 202 or not result["request_id"]:
                 raise RuntimeError("HTTP submit did not return a pending request")
 
-            deadline = time.monotonic() + (10 if replay else 300)
+            deadline = time.monotonic() + (
+                REPLAY_DEADLINE_SECONDS if replay else LIVE_DEADLINE_SECONDS
+            )
             while time.monotonic() < deadline:
+                # The bridge's own diagnostics are discarded, so an early exit
+                # (missing sqlite3, FATAL preflight) must be detected here or the
+                # command would silently wait out the whole deadline.
+                if bridge.poll() is not None:
+                    result["error_code"] = "bridge_exited"
+                    raise RuntimeError("bridge process exited before the request completed")
                 get_status, current = request(
                     port, token, "GET", "/messages/" + result["request_id"]
                 )
@@ -471,6 +481,7 @@ raise SystemExit(completed.returncode)
                     break
                 time.sleep(2)
             else:
+                result["error_code"] = "deadline_exceeded"
                 raise TimeoutError("request did not reach a terminal state before its deadline")
 
             http_server.ensure_secure_db_file(db_path)

@@ -171,6 +171,24 @@ def _check_openclaw_on_path():
     )
 
 
+def _check_bash_on_path():
+    found = shutil.which("bash")
+    if found:
+        return True, f"bash found at {found}"
+    return False, "bash executable not found on PATH (fix: install bash; bridge.sh requires it)"
+
+
+def _check_sqlite3_on_path():
+    found = shutil.which("sqlite3")
+    if found:
+        return True, f"sqlite3 found at {found}"
+    return False, (
+        "sqlite3 executable not found on PATH "
+        "(fix: install the SQLite command-line shell, version 3.35 or newer; "
+        "bridge.sh uses it to claim messages)"
+    )
+
+
 def _check_executable_file(path, label):
     resolved = Path(path)
     if not resolved.is_file():
@@ -240,6 +258,8 @@ def _check_session_lock_directory():
 DOCTOR_CHECKS = [
     ("python version", _check_python_version),
     ("openclaw on PATH", _check_openclaw_on_path),
+    ("bash on PATH", _check_bash_on_path),
+    ("sqlite3 on PATH", _check_sqlite3_on_path),
     ("adapters/openclaw.sh", _check_adapter_script),
     ("bridge.sh", _check_bridge_script),
     ("runtime.py import", _check_runtime_imports),

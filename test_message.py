@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import signal
 import stat
 import subprocess
@@ -544,6 +545,35 @@ class MessageCommandTest(unittest.TestCase):
         self.assertEqual(result["cli_invocations"], 1)
         self.assertTrue(all(result["cleanup"].values()))
 
+    def test_bridge_exit_fails_fast_with_safe_error_code(self):
+        # A PATH with bash and python3 but no sqlite3 makes bridge.sh exit in its
+        # preflight. The runtime must notice instead of waiting out the deadline.
+        thin_bin = self.root / "thin-bin"
+        thin_bin.mkdir()
+        for name in ("bash", "python3"):
+            (thin_bin / name).symlink_to(shutil.which(name))
+        fake = self.root / "never-called-openclaw"
+        fake.write_text("#!/usr/bin/env bash\nexit 1\n")
+        fake.chmod(0o700)
+        started = time.monotonic()
+        with mock.patch.dict(os.environ, {"PATH": str(thin_bin)}):
+            result = run_once("harmless fixture", agent="separate-agent", real_openclaw=str(fake))
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["error_code"], "bridge_exited")
+        self.assertEqual(result["cli_invocations"], 0)
+        self.assertLess(time.monotonic() - started, 60)
+        self.assertTrue(all(result["cleanup"].values()), result["cleanup"])
+
+    def test_deadline_sets_safe_error_code_and_cleans_up(self):
+        fake = self.root / "slow-openclaw"
+        fake.write_text("#!/usr/bin/env bash\nsleep 30\n")
+        fake.chmod(0o700)
+        with mock.patch.object(runtime, "LIVE_DEADLINE_SECONDS", 3):
+            result = run_once("harmless fixture", agent="separate-agent", real_openclaw=str(fake))
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["error_code"], "deadline_exceeded")
+        self.assertTrue(all(result["cleanup"].values()), result["cleanup"])
+
     def test_auth_and_mailbox_files_are_created_owner_only(self):
         # Reproduce the run under a permissive umask so a regression that lets
         # auth.json or messages.db inherit the umask (instead of forcing 0o600
@@ -875,6 +905,17 @@ class DoctorCommandTest(unittest.TestCase):
         self.assertIn("install OpenClaw", stdout)
         self.assertIn("one or more checks failed", stderr)
 
+    def test_doctor_reports_missing_sqlite3_and_fails(self):
+        def fake_which(name):
+            return None if name == "sqlite3" else "/usr/bin/" + name
+
+        with mock.patch.object(message.shutil, "which", side_effect=fake_which):
+            status, stdout, stderr = self.call_main(["--doctor"])
+        self.assertNotEqual(status, 0)
+        self.assertIn("[FAIL] sqlite3 on PATH:", stdout)
+        self.assertIn("3.35", stdout)
+        self.assertIn("one or more checks failed", stderr)
+
     def test_doctor_prints_one_line_per_check(self):
         with mock.patch.object(message.shutil, "which", return_value="/usr/bin/openclaw"):
             _, stdout, _ = self.call_main(["--doctor"])
@@ -893,6 +934,7 @@ class InterruptHandlingTest(unittest.TestCase):
         # module-level `import sys`, so Ctrl-C raised NameError instead of
         # exiting with status 130.
         with (
+            contextlib.redirect_stderr(io.StringIO()),
             self.assertRaises(SystemExit) as ctx,
             mock.patch.object(
                 runtime, "run_once", side_effect=runtime.SignalInterruption(signal.SIGINT)
