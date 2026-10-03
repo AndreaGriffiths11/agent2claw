@@ -1,10 +1,10 @@
-# Using GrokBot2Claw Responsibly
+# Using Agent2Claw Responsibly
 
-GrokBot2Claw hands one approved message from Grok Bot to an OpenClaw agent that already exists on your machine and returns the reply. The bridge itself is small and bounded. The agent on the other end is not: it keeps every permission you gave it when you configured it in OpenClaw.
+Agent2Claw hands one approved message from Grok Bot to an OpenClaw agent that already exists on your machine and returns the reply. The bridge itself is small and bounded. The agent on the other end is not: it keeps every permission you gave it when you configured it in OpenClaw.
 
 Use this bridge when Grok Bot needs a bounded answer from an OpenClaw agent you already trust. Do not treat it as a sandbox, a permission system, or a way to run unattended work.
 
-## When GrokBot2Claw is the right tool
+## When Agent2Claw is the right tool
 
 Use it when:
 
@@ -30,7 +30,7 @@ Use it when:
 - **Every run requires `--send`.** There is no background daemon, retry loop, always-on peer, web UI, or MCP server.
 - **Mac Shell approval remains the control point.** Treat requests from a model as untrusted input and approve only bounded tasks you understand.
 - **No identity proof for "Grok."** The internal principal label records that the command came through this local workflow; it is not cryptographic authentication of a Grok account or bot.
-- **Session continuity is intentional and locally serialized.** Commands for one agent reuse `agent:YOUR_AGENT_ID:grokbot2claw`. A per-user file lock rejects another local GrokBot2Claw command for that agent/session before invocation. It does not cover other hosts, direct OpenClaw use, or provider-side work already accepted.
+- **Session continuity is intentional and locally serialized.** Commands for one agent reuse `agent:YOUR_AGENT_ID:grokbot2claw`. A per-user file lock rejects another local Agent2Claw command for that agent/session before invocation. It does not cover other hosts, direct OpenClaw use, or provider-side work already accepted.
 - **Chat output is not a byte-preserving file transport.** A prior response became garbled after valid JSON left this command, but the exact corruption point was not established. Use `--output-dir` and verify the receipt hash when exact output matters.
 
 ## Guardrails

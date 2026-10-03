@@ -1,6 +1,6 @@
-# Contributing to GrokBot2Claw
+# Contributing to Agent2Claw
 
-Thanks for wanting to contribute. GrokBot2Claw is a small, bounded bridge; changes should keep it that way.
+Thanks for wanting to contribute. Agent2Claw is a small, bounded bridge; changes should keep it that way.
 
 ## Quick Start
 
@@ -18,7 +18,7 @@ Thanks for wanting to contribute. GrokBot2Claw is a small, bounded bridge; chang
    python3 -m ruff check .
    python3 -m ruff format --check .
    shellcheck bridge.sh adapters/openclaw.sh
-   python3 -m unittest -v test_message.py test_http_server.py test_openclaw_adapter.py
+   python3 -m unittest -v test_message.py test_http_server.py test_openclaw_adapter.py test_bridge_privacy.py
    python3 runtime.py --replay --agent ci-agent
    ```
 5. Open a PR against `main`

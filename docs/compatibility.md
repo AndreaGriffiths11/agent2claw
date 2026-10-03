@@ -30,7 +30,7 @@ Agent2Claw is an **unofficial developer preview**. The code has not been package
 - macOS arm64
 - Python 3.9.6 (local) and 3.9 / 3.13 (CI)
 - Bash 3.2.57 (local)
-- SQLite 3.51.0 (local)
+- SQLite 3.51.0 (local); 3.35 is the minimum, because `bridge.sh` claims rows with `UPDATE … RETURNING`
 - OpenClaw 2026.9.1 CLI contract
 
 Other versions may work; they have not been run.

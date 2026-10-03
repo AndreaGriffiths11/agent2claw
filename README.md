@@ -17,13 +17,13 @@ A one-minute walkthrough of what the bridge does, how the parts fit, and the pri
 ```bash
 git clone https://github.com/AndreaGriffiths11/agent2claw.git
 cd agent2claw
-python3 -m unittest -v test_message.py test_http_server.py test_openclaw_adapter.py
+python3 -m unittest -v test_message.py test_http_server.py test_openclaw_adapter.py test_bridge_privacy.py
 python3 runtime.py --replay --agent YOUR_AGENT_ID
 ```
 
 Replace `YOUR_AGENT_ID` with an id from `openclaw agents list`. The test suite and replay use fixtures and call no model or provider. There is no install step and no global configuration change.
 
-**Requirements:** macOS with Grok Bot using Mac Shell, OpenClaw `2026.9.1` with its Gateway running, an existing OpenClaw agent you choose, and `python3` (3.9+), `bash`, and `sqlite3` on `PATH`. See [Setup](docs/setup.md) for the full checklist.
+**Requirements:** macOS with Grok Bot using Mac Shell, OpenClaw `2026.9.1` with its Gateway running, an existing OpenClaw agent you choose, and `python3` (3.9+), `bash`, and `sqlite3` (3.35+) on `PATH`. See [Setup](docs/setup.md) for the full checklist.
 
 ## What It Does
 

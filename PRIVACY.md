@@ -1,8 +1,8 @@
-# Privacy Policy: GrokBot2Claw
+# Privacy Policy: Agent2Claw
 
 **Last updated:** September 25, 2026
 
-GrokBot2Claw is a local command-line bridge. It runs on your machine, talks only to itself over loopback and to your local OpenClaw CLI, and keeps no service running between commands.
+Agent2Claw is a local command-line bridge. It runs on your machine, talks only to itself over loopback and to your local OpenClaw CLI, and keeps no service running between commands.
 
 ---
 
@@ -49,7 +49,7 @@ The bridge also keeps one lock file per local agent/session. It lives in an owne
 
 ## Third parties
 
-The bridge sends your message to the OpenClaw agent you selected. What OpenClaw and its configured model provider do with that message is governed by their own terms and by how you configured the agent. GrokBot2Claw does not send data to any other party.
+The bridge sends your message to the OpenClaw agent you selected. What OpenClaw and its configured model provider do with that message is governed by their own terms and by how you configured the agent. Agent2Claw does not send data to any other party.
 
 ## Contact
 

@@ -4,6 +4,9 @@ Agent2Claw is a developer preview with no tagged releases. Entries are grouped b
 
 ## Unreleased
 
+- fix: `message.py --send` now fails fast with `bridge_exited` when the local bridge process stops early, instead of silently waiting out the 300-second deadline; the deadline itself now reports `deadline_exceeded`
+- fix: `bridge.sh` exits at startup when `sqlite3` is missing or older than 3.35 (no `UPDATE … RETURNING`), and `--doctor` checks `bash` and `sqlite3` on `PATH`
+- docs: fix the clone step (`cd agent2claw`), include `test_bridge_privacy.py` in every documented test command to match CI, record the SQLite 3.35 floor, and finish the Agent2Claw retitle in SECURITY, CONTRIBUTING, PRIVACY, and Responsible Use
 - renamed the repository from `grokbot2claw` to `agent2claw`; the old URL redirects. Code-internal identifiers (session keys, lock directories, temp prefixes) are unchanged on purpose.
 - docs: operating the bridge from Muse or any agent with SSH access to the Mac ([docs/muse.md](docs/muse.md)), verified end to end 2026-10-03; README retitled to Agent2Claw with operator-neutral wording
 
