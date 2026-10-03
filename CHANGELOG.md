@@ -1,6 +1,6 @@
 # Changelog
 
-GrokBot2Claw is a developer preview with no tagged releases. Entries are grouped by date from the repository's Git history. Dates are in 2026.
+Agent2Claw is a developer preview with no tagged releases. Entries are grouped by date from the repository's Git history. Dates are in 2026.
 
 ## Unreleased
 
