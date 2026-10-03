@@ -79,6 +79,7 @@ Details and guardrails: [Responsible Use](docs/responsible-use.md). To report a 
 | | |
 |---|---|
 | [Setup](docs/setup.md) | Requirements, clone, offline tests, first live send, `--output-dir`, Grok Bot instructions |
+| [Muse and other agents](docs/muse.md) | Operating the bridge from Muse or any agent with SSH access to the Mac |
 | [Responsible Use](docs/responsible-use.md) | Security model, limits, agent permissions, guardrails |
 | [Compatibility](docs/compatibility.md) | What has been verified, where, and what remains unverified |
 | [Troubleshooting](docs/troubleshooting.md) | OpenClaw, replay, and file output problems |
