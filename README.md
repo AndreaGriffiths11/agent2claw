@@ -2,7 +2,7 @@
 
 Send one message from your coding agent to your OpenClaw agent and get the reply back.
 
-**Unofficial local-first developer preview.** Not affiliated with or endorsed by xAI, Grok, Cursor, Anysphere, or OpenClaw.
+**Unofficial local-first developer preview.** Not affiliated with or endorsed by xAI, Grok, Cursor, Anysphere, OpenClaw, or Meta.
 
 ## Explainer video
 
