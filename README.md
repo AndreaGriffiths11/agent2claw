@@ -15,7 +15,7 @@ A one-minute walkthrough of what the bridge does, how the parts fit, and the pri
 ## Quick Start
 
 ```bash
-git clone https://github.com/AndreaGriffiths11/grokbot2claw.git
+git clone https://github.com/AndreaGriffiths11/agent2claw.git
 cd grokbot2claw
 python3 -m unittest -v test_message.py test_http_server.py test_openclaw_adapter.py
 python3 runtime.py --replay --agent YOUR_AGENT_ID
