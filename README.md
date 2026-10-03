@@ -43,6 +43,8 @@ Grok Bot → approved Mac Shell command → local Python process
 
 ## Connect Grok Bot
 
+Using a different operator? The bridge is sender-agnostic: [operating it from Muse or any agent with SSH access](docs/muse.md).
+
 First live send, from the repository root:
 
 ```bash

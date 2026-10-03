@@ -4,6 +4,9 @@ Agent2Claw is a developer preview with no tagged releases. Entries are grouped b
 
 ## Unreleased
 
+- renamed the repository from `grokbot2claw` to `agent2claw`; the old URL redirects. Code-internal identifiers (session keys, lock directories, temp prefixes) are unchanged on purpose.
+- docs: operating the bridge from Muse or any agent with SSH access to the Mac ([docs/muse.md](docs/muse.md)), verified end to end 2026-10-03; README retitled to Agent2Claw with operator-neutral wording
+
 ## v0.1.0-preview — 2026-09-27
 
 First public developer preview.

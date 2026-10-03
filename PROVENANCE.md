@@ -1,6 +1,6 @@
 # Provenance
 
-GrokBot2Claw was exported into a fresh Git repository with no parent history.
+Agent2Claw was exported into a fresh Git repository with no parent history.
 
 ## Reused implementation
 
