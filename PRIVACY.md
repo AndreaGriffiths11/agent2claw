@@ -53,4 +53,4 @@ The bridge sends your message to the OpenClaw agent you selected. What OpenClaw 
 
 ## Contact
 
-Questions: open an issue at [github.com/AndreaGriffiths11/grokbot2claw](https://github.com/AndreaGriffiths11/grokbot2claw/issues). Security concerns: follow [SECURITY.md](SECURITY.md) instead.
+Questions: open an issue at [github.com/AndreaGriffiths11/agent2claw](https://github.com/AndreaGriffiths11/agent2claw/issues). Security concerns: follow [SECURITY.md](SECURITY.md) instead.

@@ -8,7 +8,7 @@ If you discover a security vulnerability in GrokBot2Claw, **please report it res
 
 Instead, email: **andreagriffiths11@gmail.com**
 
-If GitHub private vulnerability reporting is enabled for this repository, you may also use the **Security** tab and **Report a vulnerability**, or draft an advisory at https://github.com/AndreaGriffiths11/grokbot2claw/security/advisories/new. Email is the primary channel.
+If GitHub private vulnerability reporting is enabled for this repository, you may also use the **Security** tab and **Report a vulnerability**, or draft an advisory at https://github.com/AndreaGriffiths11/agent2claw/security/advisories/new. Email is the primary channel.
 
 Include:
 - Description of the vulnerability

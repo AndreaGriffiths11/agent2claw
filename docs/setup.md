@@ -50,7 +50,7 @@ doctor: one or more checks failed; see FAIL lines above for fixes
 ## 1. Clone from GitHub
 
 ```bash
-git clone https://github.com/AndreaGriffiths11/grokbot2claw.git
+git clone https://github.com/AndreaGriffiths11/agent2claw.git
 cd grokbot2claw
 ```
 
