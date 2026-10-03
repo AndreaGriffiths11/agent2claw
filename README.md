@@ -1,6 +1,6 @@
-# GrokBot2Claw
+# Agent2Claw
 
-Send one message from Grok Bot to your OpenClaw agent and get the reply back through approved Mac Shell access.
+Send one message from your coding agent to your OpenClaw agent and get the reply back.
 
 **Unofficial local-first developer preview.** Not affiliated with or endorsed by xAI, Grok, Cursor, Anysphere, or OpenClaw.
 
@@ -16,7 +16,7 @@ A one-minute walkthrough of what the bridge does, how the parts fit, and the pri
 
 ```bash
 git clone https://github.com/AndreaGriffiths11/agent2claw.git
-cd grokbot2claw
+cd agent2claw
 python3 -m unittest -v test_message.py test_http_server.py test_openclaw_adapter.py
 python3 runtime.py --replay --agent YOUR_AGENT_ID
 ```
@@ -27,7 +27,7 @@ Replace `YOUR_AGENT_ID` with an id from `openclaw agents list`. The test suite a
 
 ## What It Does
 
-Grok Bot plans work in its desktop conversation. OpenClaw acts inside the agent environment you already configured. GrokBot2Claw is the explicit handoff between them:
+Your coding agent plans work in its own conversation. OpenClaw acts inside the agent environment you already configured. Agent2Claw is the explicit handoff between them:
 
 - one approved shell command sends one message;
 - the operator chooses the OpenClaw agent, not the message sender;

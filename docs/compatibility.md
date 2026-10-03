@@ -4,7 +4,7 @@ This page records what has actually been run, where, and what each run does and 
 
 ## Project status
 
-GrokBot2Claw is an **unofficial developer preview**. The code has not been packaged, deployed, or installed globally.
+Agent2Claw is an **unofficial developer preview**. The code has not been packaged, deployed, or installed globally.
 
 ## Verified
 
@@ -15,6 +15,7 @@ GrokBot2Claw is an **unofficial developer preview**. The code has not been packa
 | Sep 16 | Built-in file output, local command line | The saved response matched the expected reply, its SHA-256 matched the receipt, and the file and run directory modes were `0600` and `0700`. Fixture coverage passed 40 tests in 21.634 seconds. | `--output-dir` behavior when started from a shell |
 | Sep 21 | Grok Bot-approved built-in file output on macOS | Andrea reported approving a Grok Bot Mac Shell invocation with `--output-dir ./results` and granting Grok Bot read and hash access to the saved file. The resulting ignored `results/grokbot2claw-0lt9b4sd/result.json` was independently checked locally: its status was `completed`, its reply was exactly `GROK2CLAW_FILE_OUTPUT_OK`, and its SHA-256 was `4a9fdd1fb45595cabd9b1978d74ffd641927fd679ad338fd17d14329d4679881`. | Grok Bot use of the built-in file-output flag, based on the approval report and independent artifact validation; the Grok Bot UI itself was not independently observed |
 | Sep 21 | Local synthetic correctness/privacy regression suite | Offline fixtures cover catchable-signal cleanup, exact trailing-newline transport, invalid reply bytes, pre-parse HTTP deadlines and recovery, body-free diagnostics, atomic write-once output, and same-agent cross-process locking with different-agent independence. | Local behavior with fixtures only; no real agent, model, provider, or remote cancellation behavior |
+| Oct 3 | Muse operator over SSH | A remote Muse agent reached the Mac over Tailscale SSH, ran the doctor, 70 unit tests, and fixture replay (0 real invocations), then sent `message.py --send` to the `main` OpenClaw agent with a bounded prompt. The agent replied exactly `bridge-ok`, exit 0. | End-to-end send and reply from a non-Grok operator; the bridge is sender-agnostic |
 | Ongoing | GitHub Actions CI | Fixture suite and synthetic replay on Linux/Python 3.9 and macOS/Python 3.13. It invokes no agent, model, or provider and receives no repository secrets. | Fixture-level portability across two OS and Python versions |
 
 ## Not verified
