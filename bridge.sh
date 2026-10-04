@@ -225,6 +225,11 @@ rm -f "$STATE"/inflight.* 2>/dev/null   # clear stale locks from a prior run
 log "starting: team=$TEAM served=[$SERVED] poll=${POLL_INTERVAL}s db=$DB"
 [ -n "$SERVED" ] || { log "FATAL: set AGMSG_BRIDGE_AGENTS to the agents to serve"; exit 1; }
 [ -f "$DB" ] || { log "FATAL: agmsg db not found at $DB"; exit 1; }
+command -v sqlite3 >/dev/null 2>&1 || { log "FATAL: sqlite3 not found on PATH"; exit 1; }
+# The claim query below relies on UPDATE ... RETURNING (SQLite 3.35+). Probe
+# for it once instead of silently failing on every poll.
+sqlite3 :memory: "CREATE TABLE probe(x); INSERT INTO probe VALUES(1) RETURNING x;" >/dev/null 2>&1 \
+  || { log "FATAL: sqlite3 lacks RETURNING support (SQLite 3.35 or newer is required)"; exit 1; }
 valid_name "$TEAM" || { log "FATAL: invalid team name"; exit 1; }
 for agent in $SERVED; do valid_name "$agent" || { log "FATAL: invalid served agent name"; exit 1; }; done
 
@@ -244,6 +249,8 @@ while true; do
        RETURNING id,from_agent,body;" 2>/dev/null)
     [ -z "$row" ] && continue
 
+    # Splitting on US (0x1f) is safe only because http_server.py rejects
+    # control characters in bodies and validates agent names against NAME_RE.
     id="${row%%"$US"*}"; rest="${row#*"$US"}"; from="${rest%%"$US"*}"; body="${rest#*"$US"}"
 
     tracked=$(sqlite3 "$DB" "SELECT EXISTS(SELECT 1 FROM http_requests WHERE message_id=$id);" 2>/dev/null || echo 0)

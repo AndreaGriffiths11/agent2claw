@@ -14,7 +14,7 @@ boundary, not a tool sandbox. Read [Setup](setup.md) and
 ## What has to be true
 
 1. The Mac from [Setup](setup.md): OpenClaw installed, its Gateway running,
-   GrokBot2Claw cloned, `python3 message.py --doctor` passing.
+   Agent2Claw cloned, `python3 message.py --doctor` passing.
 2. The operator machine can open an SSH session to that Mac as your user.
    On a home network the simplest path is Tailscale: both machines on the
    same tailnet, SSH to the Mac's tailnet address. On a LAN, the Mac's local
@@ -54,9 +54,9 @@ From here the flow is identical to Grok Bot's. Clone (or reuse the existing
 checkout), verify, and send:
 
 ```bash
-cd ~/repos/grokbot2claw
+cd ~/repos/agent2claw
 python3 message.py --doctor
-python3 -m unittest test_message.py test_http_server.py test_openclaw_adapter.py
+python3 -m unittest test_message.py test_http_server.py test_openclaw_adapter.py test_bridge_privacy.py
 python3 runtime.py --replay --agent <agent>
 ```
 

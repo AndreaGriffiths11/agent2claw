@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in GrokBot2Claw, **please report it responsibly**.
+If you discover a security vulnerability in Agent2Claw, **please report it responsibly**.
 
 **Do NOT open a public GitHub issue, discussion, or pull request for security vulnerabilities.**
 
@@ -26,7 +26,7 @@ Do not include credentials, tokens, or private prompt-derived content from `resu
 
 ## Scope
 
-GrokBot2Claw is a local bridge between Grok Bot Mac Shell and an OpenClaw agent. This policy covers:
+Agent2Claw is a local bridge between Grok Bot Mac Shell and an OpenClaw agent. This policy covers:
 - The command entry point (`message.py`) and runtime (`runtime.py`)
 - The loopback HTTP server and bearer token handling (`http_server.py`)
 - The temporary SQLite mailbox and bridge process (`bridge.sh`)
