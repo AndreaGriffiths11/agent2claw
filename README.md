@@ -6,10 +6,10 @@ Send one message from your coding agent to your OpenClaw agent and get the reply
 
 ## Explainer video
 
-A one-minute walkthrough of what the bridge does, how the parts fit, and the privacy decision under the hood. Captions in English.
+A 78-second walkthrough of what the bridge does, how the parts fit, and the privacy decision under the hood. Captions in English.
 
-<video src="https://github.com/user-attachments/assets/107010b5-0d19-4ddb-97a2-e7f80ab6653f" controls muted playsinline width="720">
-  Your browser does not support HTML5 video. <a href="https://github.com/user-attachments/assets/107010b5-0d19-4ddb-97a2-e7f80ab6653f">Download the explainer</a>.
+<video src="https://github.com/user-attachments/assets/02a701c7-ca7e-4c54-9823-845f45bf140e" controls muted playsinline width="720">
+  Your browser does not support HTML5 video. <a href="https://github.com/user-attachments/assets/02a701c7-ca7e-4c54-9823-845f45bf140e">Download the explainer</a>.
 </video>
 
 ## Quick Start
